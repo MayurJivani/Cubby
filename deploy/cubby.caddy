@@ -1,0 +1,14 @@
+http://cubby.futile.studio {
+	encode gzip
+
+	# The browser only hands out WebCrypto in a secure context, so the public
+	# address must be https — that is Cloudflare's half of this. The origin stays
+	# plain http behind it, same as the other sites on this box.
+	reverse_proxy localhost:4747 {
+		# The item feed is SSE. Without this the proxy sits on frames and the
+		# other device looks dead until something else flushes the buffer.
+		flush_interval -1
+	}
+
+	header Cache-Control "no-cache"
+}

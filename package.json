@@ -1,0 +1,35 @@
+{
+  "name": "cubby-drop",
+  "version": "0.1.0",
+  "description": "An end-to-end encrypted drop box for your own devices. Text and files between laptop and phone, sealed in the browser — the server stores bytes it cannot read.",
+  "type": "module",
+  "bin": {
+    "cubby": "./bin/cubby.js"
+  },
+  "exports": {
+    ".": "./src/server.js",
+    "./crypto": "./src/crypto.js",
+    "./store": "./src/store.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "bin"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node bin/cubby.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "clipboard",
+    "airdrop",
+    "end-to-end-encryption",
+    "file-transfer",
+    "self-hosted",
+    "zero-dependency"
+  ],
+  "license": "MIT"
+}
