@@ -33,8 +33,17 @@ re-approve — which is also why there's no QR code in this project: 16 characte
 from an alphabet with no `I`, `L`, `O`, `U`, `0` or `1` is about 78 bits, and it's
 short enough to read off a screen and type with a thumb.
 
-Lose interest in a device? **Forget on this device** clears the code there and
-leaves the others alone.
+Paired stays paired: there is no session, no expiry, and no re-approval. Open the
+page next month and it's the same cubby. **Unpair this device** is the only thing
+that ends it, and it ends it on that device alone.
+
+The one force that can undo a pairing is the browser itself — Safari evicts
+`localStorage` for sites you haven't opened in about a week, which is exactly how
+a pairing would die over a holiday. So Cubby asks for a storage-persistence grant
+on pairing, and ships a manifest: add it to your home screen and the pairing is
+exempt for good. The pairing card tells you which of the two you got. Either way
+the code is right there to copy — it's the only way back in if a browser is wiped,
+so it's worth writing down once.
 
 ## What the server knows
 
@@ -100,6 +109,8 @@ minute per client, capped in size, and self-emptying on a timer, but open.
   other device.
 - **Files both ways.** Drop them on the page, pick them, or paste an image straight
   from the clipboard. Encrypted client-side, up to 64 MB each.
+- **Images show themselves.** Anything under 8 MB with an image type is fetched,
+  decrypted, and drawn in the list — once per item, not once per redraw.
 - **Live.** Items appear on every open device at once over SSE. No refresh.
 - **Self-sweeping.** Items expire after `--hours`; the pile is capped per room and
   in total, oldest evicted first. It never quietly fills your disk.

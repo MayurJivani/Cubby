@@ -1,0 +1,18 @@
+{
+  "name": "Cubby",
+  "short_name": "Cubby",
+  "description": "An end-to-end encrypted drop box for your own devices.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#16161a",
+  "theme_color": "#16161a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

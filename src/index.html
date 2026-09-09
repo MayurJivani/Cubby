@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>Cubby</title>
+<!-- Installed to a home screen, the pairing stops being something the browser
+     may evict — and it is how you want this on a phone anyway. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <style>
   :root {
     --bg: #f6f6f4; --card: #fff; --ink: #16161a; --dim: #6b6b76;
@@ -51,6 +55,10 @@
     margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto;
     font: .875rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
+  .shot {
+    display: block; max-width: 100%; max-height: 18rem; width: auto;
+    border-radius: .4rem; background: var(--bg);
+  }
   .empty { color: var(--dim); text-align: center; padding: 2.5rem 1rem; border: 1px dashed var(--line); border-radius: .6rem; }
   body.dragging { outline: 3px dashed var(--accent); outline-offset: -6px; }
   #status { position: fixed; inset: auto 0 1rem; text-align: center; pointer-events: none; }
@@ -90,9 +98,10 @@
       <button id="copycode">Copy code</button>
       <button id="copylink">Copy link</button>
       <span class="grow"></span>
-      <button id="forget">Forget on this device</button>
+      <button id="forget">Unpair this device</button>
     </div>
-    <p class="hint">Anyone with this code can read everything you drop here. The server can't — it never sees the code.</p>
+    <p class="hint" id="persist"></p>
+    <p class="hint">Anyone with this code can read everything you drop here. The server can't — it never sees the code. Worth writing down: it's the only way back in if you clear this browser.</p>
   </section>
 
   <textarea id="text" placeholder="Paste or type anything, then Send (Ctrl+Enter)."></textarea>

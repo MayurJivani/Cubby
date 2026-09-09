@@ -11,9 +11,15 @@ const OVERHEAD = 12 + 16; // iv + GCM tag, the difference between file size and 
 const $ = (id) => document.getElementById(id);
 const api = (path, init) => fetch(path, { credentials: 'same-origin', ...init });
 
+// Big enough for a photo off a phone, small enough not to pull a video down by
+// accident every time the list re-renders.
+const MAX_PREVIEW = 8 * 1024 * 1024;
+
 let key;
 let room;
 const plaintext = new Map(); // item id -> decrypted meta, so re-renders are free
+const previews = new Map(); // item id -> object URL, so an image is fetched once
+const fetching = new Set();
 
 function toast(msg) {
   const b = document.createElement('b');
@@ -46,19 +52,48 @@ async function metaOf(item) {
   return plaintext.get(item.id);
 }
 
-async function download(item, meta) {
-  toast(`Fetching ${meta.name}…`);
+/** Pull a blob down and decrypt it, once per item however often we re-render. */
+async function objectUrl(item, meta) {
+  if (previews.has(item.id)) return previews.get(item.id);
   const res = await api(`/api/blob/${item.id}?room=${room}`);
   const url = URL.createObjectURL(new Blob([await decrypt(key, await res.arrayBuffer())], { type: meta.type }));
+  previews.set(item.id, url);
+  return url;
+}
+
+async function download(item, meta) {
+  toast(`Fetching ${meta.name}…`);
   const a = document.createElement('a');
-  a.href = url;
+  a.href = await objectUrl(item, meta);
   a.download = meta.name;
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+async function showImage(item, meta, img) {
+  if (fetching.has(item.id)) return;
+  fetching.add(item.id);
+  try {
+    img.src = await objectUrl(item, meta);
+  } catch {
+    img.remove(); // the Download button is still there; a broken preview helps nobody
+  } finally {
+    fetching.delete(item.id);
+  }
+}
+
+/** Items that fell off the list take their decrypted copies with them. */
+function forget(live) {
+  for (const [id, url] of previews) {
+    if (live.has(id)) continue;
+    URL.revokeObjectURL(url);
+    previews.delete(id);
+  }
+  for (const id of plaintext.keys()) if (!live.has(id)) plaintext.delete(id);
 }
 
 async function render(items) {
   const metas = await Promise.all(items.map(metaOf));
+  forget(new Set(items.map((i) => i.id)));
   $('count').textContent = items.length ? `${items.length} item${items.length > 1 ? 's' : ''}` : '';
   $('empty').hidden = items.length > 0;
 
@@ -92,6 +127,14 @@ async function render(items) {
       get.textContent = 'Download';
       get.onclick = () => download(item, meta);
       bar.append(get);
+
+      if (meta.type?.startsWith('image/') && item.size <= MAX_PREVIEW) {
+        const img = document.createElement('img');
+        img.className = 'shot';
+        img.alt = meta.name;
+        li.append(img);
+        showImage(item, meta, img);
+      }
     }
 
     const del = document.createElement('button');
@@ -164,7 +207,7 @@ function wire() {
     toast('Link copied');
   };
   $('forget').onclick = () => {
-    if (!confirm('Forget this cubby on this device? The code still works elsewhere.')) return;
+    if (!confirm('Unpair this device? Your other devices keep the cubby, and the code still opens it.')) return;
     localStorage.removeItem(SAVED);
     location.reload();
   };
@@ -183,12 +226,26 @@ function wire() {
   });
 }
 
+/**
+ * Safari evicts localStorage for a site you have not opened in about a week,
+ * which is exactly how a pairing dies over a holiday. A storage-persistence
+ * grant exempts it; installing the page to the home screen is the other thing
+ * that earns one. Ask, then say plainly which of the two you got.
+ */
+async function keepPaired() {
+  const granted = (await navigator.storage?.persisted?.()) || (await navigator.storage?.persist?.()) || false;
+  $('persist').textContent = granted
+    ? 'Paired on this device until you unpair it — this browser has been told to keep it.'
+    : 'This browser may forget the pairing if you go weeks without opening Cubby. Add it to your home screen and it will not.';
+}
+
 async function open(code) {
   ({ room, key } = await deriveIdentity(code));
   // Paired once, paired for good: the code lives here and nowhere on the server.
   localStorage.setItem(SAVED, normalize(code));
   history.replaceState(null, '', location.pathname); // keep the key out of the address bar
   $('code').textContent = format(code);
+  keepPaired();
   $('gate').hidden = true;
   $('app').hidden = false;
   wire();

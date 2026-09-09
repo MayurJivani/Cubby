@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="Cubby">
+  <!-- Maskable, so everything that matters stays inside the middle 80%. -->
+  <rect width="192" height="192" rx="42" fill="#16161a"/>
+  <g fill="none" stroke="#6cc294" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M44 76h104v66a6 6 0 0 1-6 6H50a6 6 0 0 1-6-6z"/>
+    <path d="M38 58h116v18H38z"/>
+    <path d="M80 104h32"/>
+  </g>
+</svg>

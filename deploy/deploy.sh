@@ -1,18 +1,27 @@
 #!/bin/sh
 # Ship cubby to Jinx. There is no node on that box and no root in this script, so
-# the unit of deployment is a container: the source goes over as a build context
-# on stdin, docker builds it there, and the old container is replaced.
+# the unit of deployment is a container: the source goes over as a tarball, docker
+# builds it there, and the old container is replaced.
 #
 # The pile lives in the named volume `cubby-data`, which is never touched here —
 # rebuilding or rolling back does not lose what people have dropped.
 #
-# One-time setup is deploy/install.sh, which needs root and only touches Caddy.
+# deploy/ is also unpacked to ~/cubby-setup, because install.sh needs root and
+# root needs a path that exists. That is the only piece of this that outlives the
+# run.
 set -eu
 cd "$(dirname "$0")/.."
 
-tar czf - Dockerfile package.json src bin | ssh ssh.futile.studio '
+tar czf - Dockerfile package.json src bin deploy | ssh ssh.futile.studio '
   set -eu
-  docker build -q -t cubby:latest - >/dev/null
+  tmp=$(mktemp -d)
+  trap "rm -rf $tmp" EXIT
+  tar xzf - -C "$tmp"
+
+  rm -rf ~/cubby-setup
+  cp -r "$tmp/deploy" ~/cubby-setup
+
+  docker build -q -t cubby:latest "$tmp" >/dev/null
   docker rm -f cubby >/dev/null 2>&1 || true
   docker run -d \
     --name cubby \
@@ -31,4 +40,5 @@ tar czf - Dockerfile package.json src bin | ssh ssh.futile.studio '
   code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4747/)
   [ "$code" = "200" ] || { echo "cubby: not serving (HTTP $code)"; docker logs --tail 30 cubby; exit 1; }
   echo "cubby: $(docker ps --filter name=cubby --format "{{.Status}}"), serving on 127.0.0.1:4747"
+  echo "cubby: installer staged at ~/cubby-setup/install.sh"
 '

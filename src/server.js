@@ -13,6 +13,8 @@ const STATIC = {
   '/': ['text/html; charset=utf-8', fs.readFileSync(path.join(HERE, 'index.html'))],
   '/crypto.js': ['text/javascript; charset=utf-8', fs.readFileSync(path.join(HERE, 'crypto.js'))],
   '/app.js': ['text/javascript; charset=utf-8', fs.readFileSync(path.join(HERE, 'app.js'))],
+  '/manifest.webmanifest': ['application/manifest+json', fs.readFileSync(path.join(HERE, 'manifest.webmanifest'))],
+  '/icon.svg': ['image/svg+xml', fs.readFileSync(path.join(HERE, 'icon.svg'))],
 };
 const MAX_META = 8 * 1024;
 
@@ -36,7 +38,8 @@ export function createServer({ dir = 'cubby-data', pin = '', trustProxy = false,
     // Stored bytes are attacker-supplied and served back to browsers. Nothing
     // here is ever script, so say so and mean it.
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src blob:");
+    // img-src covers the decrypted previews, which are blob: URLs made in the page.
+    res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob:");
     res.setHeader('Referrer-Policy', 'no-referrer');
 
     try {
