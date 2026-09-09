@@ -1,17 +1,14 @@
 #!/bin/sh
-# One-time setup on the box: the systemd unit and the Caddy site block. Needs
-# root, and is the only step that does. Re-runnable — it replaces both rather
-# than appending, so editing deploy/cubby.service or deploy/cubby.caddy and
-# running this again is the way to change the deployment.
+# One-time setup on the box: the Caddy site block that puts TLS in front of the
+# container. Needs root, and is the only step that does — the container itself
+# runs as an ordinary member of the docker group, from deploy/deploy.sh.
+#
+# Re-runnable: it replaces any previous cubby block rather than appending, so
+# editing deploy/cubby.caddy and running this again is the way to change it.
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CADDY=/etc/caddy/Caddyfile
-
-install -d -m 755 /opt/apps/Cubby
-install -m 644 "$HERE/cubby.service" /etc/systemd/system/cubby.service
-systemctl daemon-reload
-systemctl enable cubby
 
 cp "$CADDY" "$CADDY.bak"
 
@@ -29,5 +26,4 @@ PY
 caddy validate --adapter caddyfile --config "$CADDY"
 systemctl reload caddy
 
-echo "cubby: unit installed and Caddyfile reloaded (backup at $CADDY.bak)"
-echo "cubby: now run deploy/deploy.sh to ship the code, then 'systemctl start cubby'"
+echo "cubby: Caddyfile updated and reloaded (backup at $CADDY.bak)"

@@ -1,20 +1,34 @@
 #!/bin/sh
-# Ship cubby to Jinx. No build step and no dependencies, so this is a tarball and
-# a restart. One-time setup is deploy/install.sh, which needs root; this does not,
-# beyond the one systemctl call.
+# Ship cubby to Jinx. There is no node on that box and no root in this script, so
+# the unit of deployment is a container: the source goes over as a build context
+# on stdin, docker builds it there, and the old container is replaced.
 #
-# The old copy is removed rather than written over: unlinking needs write on the
-# directory and not on the file, so this still works when a previous deploy left
-# root-owned files behind. cubby-data is never touched — the pile lives in
-# /var/lib/cubby, outside the deploy tree.
+# The pile lives in the named volume `cubby-data`, which is never touched here —
+# rebuilding or rolling back does not lose what people have dropped.
+#
+# One-time setup is deploy/install.sh, which needs root and only touches Caddy.
 set -eu
 cd "$(dirname "$0")/.."
-tar czf - src bin deploy package.json README.md | ssh ssh.futile.studio '
+
+tar czf - Dockerfile package.json src bin | ssh ssh.futile.studio '
   set -eu
-  cd /opt/apps/Cubby
-  rm -rf ./src ./bin ./deploy ./package.json ./README.md
-  tar xzf -
-  sudo systemctl restart cubby
-  sleep 1
-  systemctl is-active --quiet cubby && echo "cubby: restarted" || { journalctl -u cubby -n 20 --no-pager; exit 1; }
+  docker build -q -t cubby:latest - >/dev/null
+  docker rm -f cubby >/dev/null 2>&1 || true
+  docker run -d \
+    --name cubby \
+    --restart unless-stopped \
+    --read-only \
+    --tmpfs /tmp \
+    --memory 512m \
+    --publish 127.0.0.1:4747:4747 \
+    --volume cubby-data:/data \
+    --env CUBBY_HOURS=24 \
+    --env CUBBY_MB=2048 \
+    cubby:latest >/dev/null
+
+  # Come back and check, rather than trusting that "docker run" meant "serving".
+  sleep 2
+  code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4747/)
+  [ "$code" = "200" ] || { echo "cubby: not serving (HTTP $code)"; docker logs --tail 30 cubby; exit 1; }
+  echo "cubby: $(docker ps --filter name=cubby --format "{{.Status}}"), serving on 127.0.0.1:4747"
 '

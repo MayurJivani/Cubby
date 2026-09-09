@@ -106,6 +106,24 @@ test('an item round-trips through the server without it learning anything', asyn
   }
 });
 
+test('a text item leaves no blob behind, however it was sent', async () => {
+  const { base, server, done } = await serve();
+  const { room, key } = await deriveIdentity(newCode());
+  const meta = await sealMeta(key, { kind: 'text', text: 'no body here' });
+  try {
+    // An empty body, and no body at all — curl sends the second one.
+    await fetch(`${base}/api/item?room=${room}`, { method: 'POST', headers: { 'x-meta': meta }, body: new Uint8Array() });
+    await fetch(`${base}/api/item?room=${room}`, { method: 'POST', headers: { 'x-meta': meta } });
+
+    const items = await (await fetch(`${base}/api/items?room=${room}`)).json();
+    assert.equal(items.length, 2);
+    assert.deepEqual(items.map((i) => i.blob), [false, false]);
+    assert.deepEqual(fs.readdirSync(server.store.blobs), [], 'no empty blob files');
+  } finally {
+    await done();
+  }
+});
+
 test('rooms are sealed off from each other', async () => {
   const { base, done } = await serve();
   const mine = await deriveIdentity(newCode());

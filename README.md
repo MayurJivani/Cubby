@@ -60,24 +60,25 @@ TLS terminator you already have (see `deploy/`).
 
 ## Deploying it
 
-`deploy/` targets the Caddy + systemd setup on Jinx, in the same shape as the
-other sites:
+`deploy/` targets Jinx, which has Docker and no node — so the unit of deployment
+is a container, and the source goes over as a build context on stdin:
 
 ```bash
-sudo deploy/install.sh   # once: systemd unit + Caddy site block, both replaceable
-deploy/deploy.sh         # every time after: tarball, restart, check it came back
+deploy/deploy.sh         # every time: build there, replace the container, check it came back
+sudo deploy/install.sh   # once: the Caddy site block, replaceable
 ```
 
-`cubby.service` runs it as a `DynamicUser` with one writable directory
-(`/var/lib/cubby`), a 512 MB memory cap, and no view of the rest of the box.
-`cubby.caddy` reverse-proxies with `flush_interval -1`, without which the SSE feed
-gets buffered and the other device looks dead.
+The container runs `--read-only` with a 512 MB cap, published on `127.0.0.1` only,
+and keeps the pile in the named volume `cubby-data` — so rebuilding or rolling
+back doesn't lose what people dropped. `cubby.caddy` puts TLS in front and
+reverse-proxies with `flush_interval -1`, without which the SSE feed gets buffered
+and the other device looks dead.
 
-For anywhere else, there's a `Dockerfile`, and every flag reads from the
-environment:
+Anywhere else, the same `Dockerfile` works on its own, and every flag reads from
+the environment:
 
 ```bash
-docker run -p 4747:4747 -v cubby:/data cubby
+docker run -p 4747:4747 -v cubby-data:/data cubby
 ```
 
 | flag | env | default | |
@@ -142,7 +143,7 @@ same room and key — see `src/crypto.js`.
 node --test
 ```
 
-Ten of them, covering the code derivation, that a wrong code opens nothing, that
+Eleven of them, covering the code derivation, that a wrong code opens nothing, that
 tampered ciphertext is rejected, that rooms can't reach into each other, that the
 plaintext never appears on disk, and the caps, rate limit, and PIN gate.
 

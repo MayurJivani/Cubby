@@ -66,14 +66,16 @@ export function createServer({ dir = 'cubby-data', pin = '', trustProxy = false,
         const meta = String(req.headers['x-meta'] || '');
         if (!meta || meta.length > MAX_META) return json(res, 400, { error: 'bad meta' });
         // A body means there is a blob; text-only items live entirely in meta.
-        if (req.headers['content-length'] === '0') {
-          await readBody(req, 0);
-          return json(res, 200, store.add({ room, meta }));
-        }
+        // Which one this is comes from what actually arrived, not from a
+        // Content-Length the sender may never have set.
         const pending = store.begin();
         try {
           const out = fs.createWriteStream(pending.path);
           await pipeline(cap(req, store.maxBytes), out);
+          if (out.bytesWritten === 0) {
+            store.drop(pending.id);
+            return json(res, 200, store.add({ room, id: pending.id, meta }));
+          }
           return json(res, 200, store.add({ room, id: pending.id, meta, size: out.bytesWritten, blob: true }));
         } catch (err) {
           store.drop(pending.id);
