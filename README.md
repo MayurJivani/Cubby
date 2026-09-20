@@ -33,6 +33,14 @@ re-approve — which is also why there's no QR code in this project: 16 characte
 from an alphabet with no `I`, `L`, `O`, `U`, `0` or `1` is about 78 bits, and it's
 short enough to read off a screen and type with a thumb.
 
+**As many devices as you like, all at once.** There is no pairing *between* two
+devices — there is a cubby, and every device holding the code is in it. Laptop,
+phone, tablet, a second browser, a terminal on another machine: they all watch the
+same feed and see each drop arrive together. Adding the fourth device is the same
+gesture as adding the second, and nothing has to be re-approved by the ones
+already there. (There's a test for exactly this: four live devices plus a fifth
+writing in, and a sixth on a different code that hears nothing.)
+
 Paired stays paired: there is no session, no expiry, and no re-approval. Open the
 page next month and it's the same cubby. **Unpair this device** is the only thing
 that ends it, and it ends it on that device alone.
@@ -95,8 +103,10 @@ docker run -p 4747:4747 -v cubby-data:/data cubby
 | `--port`, `-p` | `PORT` | `4747` | |
 | `--dir`, `-d` | `CUBBY_DIR` | `cubby-data` | where ciphertext lands |
 | `--pin` | `CUBBY_PIN` | none | gate the whole server, before any room |
-| `--hours` | `CUBBY_HOURS` | `24` | how long an item survives |
+| `--hours` | `CUBBY_HOURS` | `24` | how long an item survives (24 hrs default) |
 | `--mb` | `CUBBY_MB` | `512` | total size cap across all rooms |
+| `--max-item-mb` | `CUBBY_MAX_ITEM_MB` | `80` | per-item upload size cap for standard users |
+| `--admin-key` | `CUBBY_ADMIN_KEY` | none | superuser secret key bypassing per-item upload caps |
 | `--trust-proxy` | `CUBBY_TRUST_PROXY=1` | off | rate-limit on `X-Forwarded-For`, not the proxy's socket |
 
 On a public deployment, `--pin` decides whether strangers can create rooms in your
@@ -108,11 +118,12 @@ minute per client, capped in size, and self-emptying on a timer, but open.
 - **Text both ways.** Type or paste, Send (or Ctrl/Cmd+Enter). Tap **Copy** on the
   other device.
 - **Files both ways.** Drop them on the page, pick them, or paste an image straight
-  from the clipboard. Encrypted client-side, up to 64 MB each.
+  from the clipboard. Encrypted client-side, up to 80 MB each (or unlimited per-item for superusers with admin key).
+- **Shareable Links.** Generate standalone `cubby.futile.studio` / `/s/<token>#<shareKey>` links with one-time view (burn-after-read upon explicit view) or time limits (1h, 24h, 7d). Re-encrypted so room keys are never exposed.
 - **Images show themselves.** Anything under 8 MB with an image type is fetched,
   decrypted, and drawn in the list — once per item, not once per redraw.
 - **Live.** Items appear on every open device at once over SSE. No refresh.
-- **Self-sweeping.** Items expire after `--hours`; the pile is capped per room and
+- **Self-sweeping.** Any media/item expires after 24 hours by default (`--hours`); the pile is capped per room and
   in total, oldest evicted first. It never quietly fills your disk.
 
 ## As a library
@@ -144,6 +155,13 @@ Everything is scoped to `?room=`, and `x-meta` is the sealed metadata.
 | `GET /api/blob/:id?room=R` | download the ciphertext |
 | `DELETE /api/items/:id?room=R` | remove one |
 | `DELETE /api/items?room=R` | empty the room |
+| `POST /api/share` | `x-meta` + `x-share-once: 1` or `x-share-ttl: <seconds>`; returns a token |
+| `POST /api/share/:token` | hands over the share and burns a one-time one |
+| `GET /s/:token` | the page a share link lands on — never burns anything |
+
+Opening a share is a `POST` on purpose: chat apps and crawlers fetch links they're
+shown, and a `GET` would let a link preview burn a one-time share before the
+person it was sent to ever tapped it.
 
 Which makes another machine's terminal a device too, as long as it can derive the
 same room and key — see `src/crypto.js`.
@@ -154,8 +172,10 @@ same room and key — see `src/crypto.js`.
 node --test
 ```
 
-Eleven of them, covering the code derivation, that a wrong code opens nothing, that
+Fifteen of them, covering the code derivation, that a wrong code opens nothing, that
 tampered ciphertext is rejected, that rooms can't reach into each other, that the
-plaintext never appears on disk, and the caps, rate limit, and PIN gate.
+plaintext never appears on disk, that four devices on one code all see the same
+drop, that a one-time share opens once and never again, and the caps, rate limit,
+and PIN gate.
 
 MIT.

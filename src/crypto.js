@@ -44,6 +44,21 @@ export async function deriveIdentity(code) {
   return { room: b64url(bits.slice(32)), key };
 }
 
+// A share is for someone who has no pairing code, so it gets its own key —
+// never the room key, which would hand over the whole cubby. The key rides in
+// the link's fragment, which browsers do not send to servers.
+export function newShareKey() {
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+export async function exportKey(key) {
+  return b64url(new Uint8Array(await crypto.subtle.exportKey('raw', key)));
+}
+
+export function importKey(packed) {
+  return crypto.subtle.importKey('raw', unb64url(packed), 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
 /** iv || ciphertext, so a message carries everything needed to open it. */
 export async function encrypt(key, data) {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
@@ -71,3 +86,4 @@ export async function openMeta(key, packed) {
 const b64 = (bytes) => btoa(String.fromCharCode(...bytes));
 const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const b64url = (bytes) => b64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64url = (s) => unb64(s.replace(/-/g, '+').replace(/_/g, '/'));

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex, nofollow">
+<title>Shared with you · Cubby</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #fff; --ink: #16161a; --dim: #6b6b76;
+    --line: #e2e2dd; --accent: #2f6f4f; --bad: #a33131;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16161a; --card: #1e1e24; --ink: #f2f2f0; --dim: #9a9aa5;
+            --line: #2e2e37; --accent: #6cc294; --bad: #e57373; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; padding: max(1rem, env(safe-area-inset-top)) 1rem 4rem; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 40rem; margin: 6vh auto 0; display: grid; gap: 1rem; }
+  h1 { font-size: 1.1rem; margin: 0; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: .6rem; padding: 1rem; display: grid; gap: .7rem; }
+  .hint { color: var(--dim); font-size: .8rem; margin: 0; }
+  .warn { color: var(--bad); }
+  button, a.button {
+    font: inherit; padding: .5rem .9rem; border-radius: .5rem; border: 1px solid var(--accent);
+    background: var(--accent); color: var(--bg); cursor: pointer; min-height: 2.75rem;
+    font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; justify-self: start;
+  }
+  pre {
+    margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto;
+    font: .875rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  img, video { display: block; max-width: 100%; max-height: 70vh; border-radius: .4rem; }
+  audio { width: 100%; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Someone shared this with you</h1>
+
+  <p class="hint" id="state">Opening…</p>
+
+  <section class="panel" id="panel" hidden>
+    <p class="hint" id="label"></p>
+    <div id="body"></div>
+    <button id="save" hidden>Save the file</button>
+  </section>
+
+  <p class="hint" id="burned" hidden>
+    This was a one-time link, so it has just been spent. It will not open again —
+    including for you, on this page, after a refresh. Save anything you need now.
+  </p>
+
+  <p class="hint">
+    Cubby handed your browser a sealed copy and the key came from the part of the
+    link after the <code>#</code>, which browsers never send to a server. Nothing
+    here was readable by the machine that stored it.
+  </p>
+</main>
+<script type="module" src="/share.js"></script>
+</body>
+</html>

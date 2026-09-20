@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
 import { createServer } from '../src/server.js';
-import { newCode, normalize, format, deriveIdentity, encrypt, decrypt, sealMeta, openMeta } from '../src/crypto.js';
+import { newCode, normalize, format, deriveIdentity, encrypt, decrypt, sealMeta, openMeta, newShareKey } from '../src/crypto.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cubby-'));
 const ROOM = 'test-room-1';
@@ -190,3 +190,129 @@ test('a pin gates the whole server until you give it', async () => {
     await done();
   }
 });
+
+/** A minimal SSE reader — enough to watch one room the way a device does. */
+async function watch(base, room) {
+  const res = await fetch(`${base}/api/events?room=${room}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  return {
+    async frame() {
+      for (;;) {
+        const end = buffer.indexOf('\n\n');
+        if (end !== -1) {
+          const frame = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          return JSON.parse(frame.replace(/^data: /, ''));
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error('stream closed');
+        buffer += decoder.decode(value, { stream: true });
+      }
+    },
+    close: () => reader.cancel().catch(() => {}),
+  };
+}
+
+test('every device on the code sees the same cubby, not just two', async () => {
+  const { base, done } = await serve();
+  const { room, key } = await deriveIdentity(newCode());
+  // A laptop, a phone, a tablet, and a second browser on the laptop.
+  const devices = await Promise.all([watch(base, room), watch(base, room), watch(base, room), watch(base, room)]);
+  const stranger = await watch(base, (await deriveIdentity(newCode())).room);
+
+  try {
+    await Promise.all(devices.map((d) => d.frame())); // the opening frame each gets
+    await stranger.frame();
+
+    // A fifth device — the terminal — drops something in.
+    await fetch(`${base}/api/item?room=${room}`, {
+      method: 'POST',
+      headers: { 'x-meta': await sealMeta(key, { kind: 'text', text: 'everyone gets this' }) },
+    });
+
+    const seen = await Promise.all(devices.map((d) => d.frame()));
+    for (const items of seen) {
+      assert.equal(items.length, 1);
+      assert.deepEqual(await openMeta(key, items[0].meta), { kind: 'text', text: 'everyone gets this' });
+    }
+    assert.equal(new Set(seen.map((s) => s[0].id)).size, 1, 'the same item, not four copies');
+
+    // The one watching a different room hears nothing. Give it room to be wrong.
+    const quiet = await Promise.race([
+      stranger.frame().then(() => 'woke up'),
+      new Promise((r) => setTimeout(() => r('stayed quiet'), 300)),
+    ]);
+    assert.equal(quiet, 'stayed quiet');
+  } finally {
+    for (const d of [...devices, stranger]) d.close();
+    await done();
+  }
+});
+
+test('share creation, one-time burn-after-read, and crawler protection', async () => {
+  const { base, done } = await serve();
+  const shareKey = await newShareKey();
+  const meta = await sealMeta(shareKey, { kind: 'text', text: 'shared secret' });
+
+  try {
+    const shareRes = await fetch(`${base}/api/share`, {
+      method: 'POST',
+      headers: { 'x-meta': meta, 'x-share-once': '1' },
+      body: new Uint8Array(),
+    });
+    assert.equal(shareRes.status, 200);
+    const { token, once } = await shareRes.json();
+    assert.equal(once, true);
+    assert.ok(token);
+
+    const htmlRes = await fetch(`${base}/s/${token}`);
+    assert.equal(htmlRes.status, 200);
+    assert.match(await htmlRes.text(), /<title>Shared with you · Cubby<\/title>/);
+
+    const openRes = await fetch(`${base}/api/share/${token}`, { method: 'POST' });
+    assert.equal(openRes.status, 200);
+    assert.equal(openRes.headers.get('x-once'), '1');
+    assert.equal(openRes.headers.get('x-meta'), meta);
+
+    const secondRes = await fetch(`${base}/api/share/${token}`, { method: 'POST' });
+    assert.equal(secondRes.status, 404);
+  } finally {
+    await done();
+  }
+});
+
+test('superuser key bypasses per-item upload size cap', async () => {
+  const adminKey = 'super-secret-admin-key';
+  const { base, server, done } = await serve({ maxItemBytes: 32, maxBytes: 1024, adminKey });
+  const { room, key } = await deriveIdentity(newCode());
+
+  try {
+    const meta = await sealMeta(key, { kind: 'file', name: 'medium.bin' });
+    const payload = Buffer.alloc(64);
+
+    const resStandard = await fetch(`${base}/api/item?room=${room}`, {
+      method: 'POST',
+      headers: { 'x-meta': meta },
+      body: payload,
+    });
+    assert.equal(resStandard.status, 413);
+
+    const resSuper = await fetch(`${base}/api/item?room=${room}`, {
+      method: 'POST',
+      headers: { 'x-meta': meta, 'x-admin': adminKey },
+      body: payload,
+    });
+    assert.equal(resSuper.status, 200);
+    assert.equal(server.store.list(room).length, 1);
+  } finally {
+    await done();
+  }
+});
+
+test('default store TTL is 24 hours', () => {
+  const store = new Store({ dir: tmp() });
+  assert.equal(store.ttlMs, 24 * 60 * 60 * 1000);
+});
+

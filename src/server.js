@@ -15,10 +15,22 @@ const STATIC = {
   '/app.js': ['text/javascript; charset=utf-8', fs.readFileSync(path.join(HERE, 'app.js'))],
   '/manifest.webmanifest': ['application/manifest+json', fs.readFileSync(path.join(HERE, 'manifest.webmanifest'))],
   '/icon.svg': ['image/svg+xml', fs.readFileSync(path.join(HERE, 'icon.svg'))],
+  '/share.html': ['text/html; charset=utf-8', fs.readFileSync(path.join(HERE, 'share.html'))],
+  '/share.js': ['text/javascript; charset=utf-8', fs.readFileSync(path.join(HERE, 'share.js'))],
 };
 const MAX_META = 8 * 1024;
+const SHARE = /^[A-Za-z0-9_-]{16,64}$/;
+const MAX_SHARE_MS = 7 * 24 * 60 * 60 * 1000;
 
-export function createServer({ dir = 'cubby-data', pin = '', trustProxy = false, rate = 240, ...limits } = {}) {
+export function createServer({
+  dir = 'cubby-data',
+  pin = '',
+  trustProxy = false,
+  rate = 240,
+  maxItemBytes = 80 * 1024 * 1024,
+  adminKey = '',
+  ...limits
+} = {}) {
   const store = new Store({ dir, ...limits });
   // Session token derives from the pin plus a per-run secret, so restarting invalidates old cookies.
   const secret = randomBytes(16);
@@ -48,6 +60,15 @@ export function createServer({ dir = 'cubby-data', pin = '', trustProxy = false,
 
       if (spend(clientKey(req, trustProxy), buckets, rate)) return json(res, 429, { error: 'slow down' });
 
+      // A share link is opened by someone who has no pairing and no room —
+      // the token is the only thing they hold, so it is checked before the
+      // room scoping below and never gated by the pin.
+      const opening = route.match(/^POST \/api\/share\/([A-Za-z0-9_-]+)$/);
+      if (opening) return openShare(res, opening[1]);
+      if (req.method === 'GET' && url.pathname.startsWith('/s/')) {
+        return send(res, 200, STATIC['/share.html'][0], STATIC['/share.html'][1]);
+      }
+
       if (route === 'GET /api/auth') return json(res, 200, { needsPin: Boolean(pin), ok: authed(req) });
       if (route === 'POST /api/auth') {
         const given = (await readBody(req, 1024)).toString('utf8').trim();
@@ -56,6 +77,35 @@ export function createServer({ dir = 'cubby-data', pin = '', trustProxy = false,
         return json(res, 200, { ok: true });
       }
       if (!authed(req)) return json(res, 401, { error: 'pin required' });
+
+      if (route === 'POST /api/share') {
+        const meta = String(req.headers['x-meta'] || '');
+        if (!meta || meta.length > MAX_META) return json(res, 400, { error: 'bad meta' });
+        const once = req.headers['x-share-once'] === '1';
+        const asked = Number(req.headers['x-share-ttl']) * 1000;
+        const ttl = Number.isFinite(asked) && asked > 0 ? Math.min(asked, MAX_SHARE_MS) : 0;
+        if (!once && !ttl) return json(res, 400, { error: 'bad ttl' });
+
+        const shareToken = randomBytes(18).toString('base64url');
+        const pending = store.begin();
+        try {
+          const out = fs.createWriteStream(pending.path);
+          await pipeline(cap(req, limitFor(req)), out);
+          const blobbed = out.bytesWritten > 0;
+          if (!blobbed) store.drop(pending.id);
+          // Even a burn-after-reading link gets an outside date, so one that is
+          // never opened does not sit on the disk forever.
+          const expiresAt = Date.now() + (ttl || MAX_SHARE_MS);
+          store.add({
+            room: 'share', id: pending.id, meta, token: shareToken, once, expiresAt,
+            size: blobbed ? out.bytesWritten : 0, blob: blobbed,
+          });
+          return json(res, 200, { token: shareToken, expiresAt, once });
+        } catch (err) {
+          store.drop(pending.id);
+          throw err;
+        }
+      }
 
       // Past this point everything is scoped to a room, and a room id the client
       // did not derive is just a room that happens to be empty.
@@ -74,7 +124,7 @@ export function createServer({ dir = 'cubby-data', pin = '', trustProxy = false,
         const pending = store.begin();
         try {
           const out = fs.createWriteStream(pending.path);
-          await pipeline(cap(req, store.maxBytes), out);
+          await pipeline(cap(req, limitFor(req)), out);
           if (out.bytesWritten === 0) {
             store.drop(pending.id);
             return json(res, 200, store.add({ room, id: pending.id, meta }));
@@ -104,6 +154,39 @@ export function createServer({ dir = 'cubby-data', pin = '', trustProxy = false,
       else res.destroy();
     }
   });
+
+  /** The superuser lifts the per-file cap. The volume is still the volume. */
+  function isAdmin(req) {
+    return Boolean(adminKey) && equals(String(req.headers['x-admin'] || ''), adminKey);
+  }
+
+  function limitFor(req) {
+    return isAdmin(req) ? store.maxBytes : Math.min(maxItemBytes, store.maxBytes);
+  }
+
+  /**
+   * Hand the whole share over in one response — metadata in a header, ciphertext
+   * as the body — so a one-time link is spent exactly once. It is a POST because
+   * chat apps and crawlers fetch links they are shown, and a GET would let them
+   * burn a link before the person it was sent to ever opened it.
+   */
+  function openShare(res, shareToken) {
+    if (!SHARE.test(shareToken)) return json(res, 404, { error: 'gone' });
+    const item = store.share(shareToken);
+    if (!item) return json(res, 404, { error: 'gone' });
+
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': item.size,
+      'x-meta': item.meta,
+      'x-once': item.once ? '1' : '0',
+      'x-expires': String(item.expiresAt),
+    });
+    // Burn only once the bytes are actually out the door.
+    if (item.once) res.on('finish', () => store.burn(shareToken));
+    if (!item.blob) return res.end();
+    return fs.createReadStream(store.blobPath(item.id)).pipe(res);
+  }
 
   function authed(req) {
     if (!pin) return true;

@@ -1,11 +1,21 @@
 // The client. Everything that touches plaintext lives on this side of the wire.
-import { newCode, format, normalize, deriveIdentity, encrypt, decrypt, sealMeta, openMeta } from './crypto.js';
+import {
+  newCode, format, normalize, deriveIdentity, encrypt, decrypt, sealMeta, openMeta,
+  newShareKey, exportKey,
+} from './crypto.js';
 
 // ponytail: files are encrypted in one shot, so a file has to fit in memory
 // twice. Fine for the phone-to-laptop things this is for; the upgrade path is
 // chunked AES-GCM with a per-chunk counter and a streaming reader.
-const MAX_FILE = 64 * 1024 * 1024;
+const MAX_FILE = 80 * 1024 * 1024;
 const SAVED = 'cubby.code';
+const ADMIN = 'cubby.admin';
+const SHARES = [
+  ['Once', { once: true }],
+  ['1 hour', { ttl: 3600 }],
+  ['24 hours', { ttl: 86_400 }],
+  ['7 days', { ttl: 604_800 }],
+];
 const OVERHEAD = 12 + 16; // iv + GCM tag, the difference between file size and stored size
 
 const $ = (id) => document.getElementById(id);
@@ -137,6 +147,14 @@ async function render(items) {
       }
     }
 
+    if (meta) {
+      const out = document.createElement('button');
+      out.textContent = 'Share';
+      out.title = 'Make a link for someone who has no pairing code';
+      out.onclick = () => { out.disabled = true; offerShare(item, meta, bar); };
+      bar.append(out);
+    }
+
     const del = document.createElement('button');
     del.textContent = '✕';
     del.title = 'Delete';
@@ -149,13 +167,73 @@ async function render(items) {
   }));
 }
 
+const admin = () => localStorage.getItem(ADMIN) || '';
+
+function headers(extra) {
+  // The superuser key only ever lifts a limit; it is not a login, and the
+  // server still cannot read a byte of what it waves through.
+  return admin() ? { ...extra, 'x-admin': admin() } : extra;
+}
+
 async function put(meta, body) {
   const res = await api(`/api/item?room=${room}`, {
     method: 'POST',
-    headers: { 'x-meta': await sealMeta(key, meta), 'Content-Type': 'application/octet-stream' },
+    headers: headers({ 'x-meta': await sealMeta(key, meta), 'Content-Type': 'application/octet-stream' }),
     body: body ?? new Uint8Array(),
   });
   if (!res.ok) throw new Error(`${res.status}`);
+}
+
+/**
+ * Sharing re-seals the item under a throwaway key, so the link hands over one
+ * item and never the cubby. The room's copy is left exactly as it was.
+ */
+async function share(item, meta, policy) {
+  const shareKey = await newShareKey();
+  const body = item.blob ? await encrypt(shareKey, await decrypt(key, await (await api(`/api/blob/${item.id}?room=${room}`)).arrayBuffer())) : new Uint8Array();
+  const res = await api('/api/share', {
+    method: 'POST',
+    headers: headers({
+      'x-meta': await sealMeta(shareKey, meta),
+      'Content-Type': 'application/octet-stream',
+      ...(policy.once ? { 'x-share-once': '1' } : { 'x-share-ttl': String(policy.ttl) }),
+    }),
+    body,
+  });
+  if (!res.ok) throw new Error(`${res.status}`);
+  const { token } = await res.json();
+  return `${location.origin}/s/${token}#${await exportKey(shareKey)}`;
+}
+
+/** Replace the item's buttons with the four choices, then hand back the link. */
+function offerShare(item, meta, bar) {
+  const row = document.createElement('div');
+  row.className = 'meta';
+  const label = document.createElement('span');
+  label.textContent = 'Link that works:';
+  row.append(label);
+
+  for (const [name, policy] of SHARES) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.onclick = async () => {
+      row.replaceChildren(document.createTextNode('Sealing…'));
+      try {
+        const link = await share(item, meta, policy);
+        await navigator.clipboard.writeText(link).catch(() => {});
+        const out = document.createElement('input');
+        out.readOnly = true;
+        out.value = link;
+        out.onfocus = () => out.select();
+        row.replaceChildren(out);
+        toast(policy.once ? 'One-time link copied' : 'Link copied');
+      } catch (err) {
+        row.replaceChildren(document.createTextNode(`Could not share (${err.message})`));
+      }
+    };
+    row.append(b);
+  }
+  bar.after(row);
 }
 
 async function sendText() {
@@ -175,8 +253,8 @@ async function sendText() {
 
 async function upload(files) {
   for (const file of files) {
-    if (file.size > MAX_FILE) {
-      toast(`${file.name} is over ${bytes(MAX_FILE)}`);
+    if (file.size > MAX_FILE && !admin()) {
+      toast(`${file.name} is over the ${bytes(MAX_FILE)} limit`);
       continue;
     }
     try {
@@ -190,6 +268,14 @@ async function upload(files) {
   }
 }
 
+function sayLimit() {
+  // The server has the final say — a wrong key just means the upload is refused
+  // at the usual size, so this is a claim about intent, not a permission.
+  $('limit').textContent = admin()
+    ? 'Superuser key set — files go up as large as the server will hold.'
+    : `Files up to ${bytes(MAX_FILE)}.`;
+}
+
 function wire() {
   $('send').onclick = sendText;
   $('text').onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendText(); };
@@ -198,6 +284,15 @@ function wire() {
   $('clear').onclick = () => confirm('Delete everything in this cubby?') && api(`/api/items?room=${room}`, { method: 'DELETE' });
 
   $('pair').onclick = () => $('card').toggleAttribute('hidden');
+
+  $('adminkey').value = admin();
+  $('adminkey').onchange = () => {
+    const given = $('adminkey').value.trim();
+    if (given) localStorage.setItem(ADMIN, given);
+    else localStorage.removeItem(ADMIN);
+    sayLimit();
+  };
+  sayLimit();
   $('copycode').onclick = async () => {
     await navigator.clipboard.writeText($('code').textContent);
     toast('Code copied');

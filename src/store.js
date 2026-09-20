@@ -51,7 +51,14 @@ export class Store extends EventEmitter {
 
   list(room) {
     this.prune();
-    return this.items.filter((it) => it.room === room);
+    // Shares live in the same pile but are reachable only by their token —
+    // otherwise anyone could ask a room for a listing of them.
+    return this.items.filter((it) => it.room === room && !it.token);
+  }
+
+  share(token) {
+    this.prune();
+    return this.items.find((it) => it.token === token);
   }
 
   /** Reserve an id for an upload. Nothing is visible until add(). */
@@ -60,8 +67,10 @@ export class Store extends EventEmitter {
     return { id, path: this.blobPath(id) };
   }
 
-  add({ room, id = randomUUID(), meta, size = 0, blob = false }) {
+  add({ room, id = randomUUID(), meta, size = 0, blob = false, token, expiresAt, once }) {
     const item = { id, room, meta, size, blob, at: Date.now() };
+    // A share carries its own deadline and its own way of dying.
+    if (token) Object.assign(item, { token, expiresAt, once: Boolean(once) });
     this.items.unshift(item);
     this.prune();
     this.#changed(room);
@@ -94,15 +103,34 @@ export class Store extends EventEmitter {
     this.#changed(room);
   }
 
+  /** Burn a one-time share the moment it has been handed over. */
+  burn(token) {
+    const i = this.items.findIndex((it) => it.token === token);
+    if (i === -1) return false;
+    const [item] = this.items.splice(i, 1);
+    if (item.blob) this.drop(item.id);
+    this.#save();
+    return true;
+  }
+
   /** Drop expired items, then oldest-first until under every cap. */
   prune() {
-    const cutoff = Date.now() - this.ttlMs;
+    const now = Date.now();
+    const cutoff = now - this.ttlMs;
     const perRoom = new Map();
     const kept = [];
     const dropped = [];
     let bytes = 0;
     for (const item of this.items) {
       const count = perRoom.get(item.room) || 0;
+      // A share expires on its own clock and is not part of any room's budget.
+      if (item.token) {
+        if (item.expiresAt < now) dropped.push(item);
+        // Kept shares still count against the disk, so a pile of them squeezes
+        // the rooms rather than quietly filling the volume.
+        else (bytes += item.size, kept.push(item));
+        continue;
+      }
       if (item.at < cutoff || count >= this.maxItems || bytes + item.size > this.maxBytes) {
         dropped.push(item);
       } else {

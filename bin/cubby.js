@@ -11,6 +11,8 @@ const { values } = parseArgs({
     pin: { type: 'string', default: env.CUBBY_PIN || '' },
     hours: { type: 'string', default: env.CUBBY_HOURS || '24' },
     mb: { type: 'string', default: env.CUBBY_MB || '512' },
+    'max-item-mb': { type: 'string', default: env.CUBBY_MAX_ITEM_MB || '80' },
+    'admin-key': { type: 'string', default: env.CUBBY_ADMIN_KEY || '' },
     'trust-proxy': { type: 'boolean', default: env.CUBBY_TRUST_PROXY === '1' },
     help: { type: 'boolean', short: 'h' },
   },
@@ -19,12 +21,12 @@ const { values } = parseArgs({
 if (values.help) {
   console.log(`cubby — an end-to-end encrypted drop box for your own devices
 
-  cubby [--port 4747] [--dir cubby-data] [--pin 1234] [--hours 24] [--mb 512] [--trust-proxy]
+  cubby [--port 4747] [--dir cubby-data] [--pin 1234] [--hours 24] [--mb 512] [--max-item-mb 80] [--admin-key KEY] [--trust-proxy]
 
 Open the printed URL, start a cubby, and type the pairing code into your other
 device once. The server stores ciphertext only; the code never reaches it.
 Every flag also reads from the environment: PORT, CUBBY_DIR, CUBBY_PIN,
-CUBBY_HOURS, CUBBY_MB, CUBBY_TRUST_PROXY=1.`);
+CUBBY_HOURS, CUBBY_MB, CUBBY_MAX_ITEM_MB, CUBBY_ADMIN_KEY, CUBBY_TRUST_PROXY=1.`);
   process.exit(0);
 }
 
@@ -34,6 +36,8 @@ const server = createServer({
   trustProxy: values['trust-proxy'],
   ttlMs: Number(values.hours) * 3600_000,
   maxBytes: Number(values.mb) * 1024 * 1024,
+  maxItemBytes: Number(values['max-item-mb']) * 1024 * 1024,
+  adminKey: values['admin-key'],
 });
 
 server.listen(Number(values.port), '0.0.0.0', () => {
