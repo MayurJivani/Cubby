@@ -53,6 +53,27 @@ exempt for good. The pairing card tells you which of the two you got. Either way
 the code is right there to copy — it's the only way back in if a browser is wiped,
 so it's worth writing down once.
 
+## How long things stay
+
+Every drop carries its own deadline, chosen on the device that sent it:
+
+```
+2 hours · 8 hours · 24 hours · 2 days · 7 days
+```
+
+The picker sits in the header, the choice is remembered on that device, and each
+item shows what's left of its life (`gone in 6h`). The server clamps whatever it's
+handed to `--max-keep-hours` — a week by default — so the header is a request, not
+an instruction. Send nothing and you get the server's own `--hours`, which is 24.
+
+Where there's a server password, signing in picks from the same ladder: this
+browser stays signed in for two hours, or seven days, as you like. The session is
+an HTTP-only cookie holding an HMAC of the password under a secret kept in the
+data directory at `0600` — so a redeploy doesn't sign every device out, and
+deleting that one file signs everyone out at once. The password is the door to the
+server; it is not what encrypts anything, and it never reaches your cubby's
+contents.
+
 ## What the server knows
 
 | it stores | it can read |
@@ -66,6 +87,21 @@ That's the whole threat model. It hides content and filenames from whoever runs
 the box; it does not hide that a room exists, how big things are, or when you
 dropped them. Anyone holding the code can read everything in the room, so treat
 the code the way you'd treat the contents.
+
+Around that, the ordinary web hardening:
+
+- A policy with no room for inline anything — `script-src 'self'`, `style-src
+  'self'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'none'`,
+  `frame-ancestors 'none'` — which is why there isn't a `<style>` block or a
+  `style=""` attribute anywhere in the markup, and a test fails if one returns.
+- `X-Frame-Options`, COOP, CORP, `Permissions-Policy`, `nosniff`, `no-referrer`,
+  `no-store` on everything under `/api/`, and HSTS once something actually
+  terminates TLS.
+- Twelve tries a minute per client at the password and at share tokens, on a
+  budget separate from ordinary traffic. Share tokens are 144 random bits.
+- Session cookies are `HttpOnly`, `SameSite=Strict`, and `Secure` behind TLS.
+- Per-file and whole-volume size caps enforced on the stream as it arrives, so a
+  lying `Content-Length` doesn't get to fill the disk.
 
 ## HTTPS is not optional
 
@@ -102,11 +138,12 @@ docker run -p 4747:4747 -v cubby-data:/data cubby
 |---|---|---|---|
 | `--port`, `-p` | `PORT` | `4747` | |
 | `--dir`, `-d` | `CUBBY_DIR` | `cubby-data` | where ciphertext lands |
-| `--pin` | `CUBBY_PIN` | none | gate the whole server, before any room |
+| `--pin` | `CUBBY_PIN` | none | password for the server door, asked before any room |
 | `--hours` | `CUBBY_HOURS` | `24` | how long an item survives (24 hrs default) |
 | `--mb` | `CUBBY_MB` | `512` | total size cap across all rooms |
 | `--max-item-mb` | `CUBBY_MAX_ITEM_MB` | `80` | per-item upload size cap for standard users |
-| `--admin-key` | `CUBBY_ADMIN_KEY` | none | superuser secret key bypassing per-item upload caps |
+| `--admin-key` | `CUBBY_ADMIN_KEY` | none | the superuser key; lifts the per-file cap for whoever holds it |
+| `--max-keep-hours` | `CUBBY_MAX_KEEP_HOURS` | `168` | ceiling on what a device may ask to keep |
 | `--trust-proxy` | `CUBBY_TRUST_PROXY=1` | off | rate-limit on `X-Forwarded-For`, not the proxy's socket |
 
 On a public deployment, `--pin` decides whether strangers can create rooms in your
@@ -172,10 +209,11 @@ same room and key — see `src/crypto.js`.
 node --test
 ```
 
-Fifteen of them, covering the code derivation, that a wrong code opens nothing, that
+Nineteen of them, covering the code derivation, that a wrong code opens nothing, that
 tampered ciphertext is rejected, that rooms can't reach into each other, that the
 plaintext never appears on disk, that four devices on one code all see the same
-drop, that a one-time share opens once and never again, and the caps, rate limit,
-and PIN gate.
+drop, that a one-time share opens once and never again, that a device's chosen
+retention is honoured and its greed clamped, that a sign-in survives a restart,
+and the caps, the rate limits, and every security header the page relies on.
 
 MIT.
