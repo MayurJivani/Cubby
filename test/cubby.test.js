@@ -191,6 +191,108 @@ test('a pin gates the whole server until you give it', async () => {
   }
 });
 
+test('the sender picks how long a drop lives, the server holds the ceiling', async () => {
+  const { base, server, done } = await serve({ maxTtlMs: 7200_000 }); // two hours, no more
+  const { room, key } = await deriveIdentity(newCode());
+  const meta = await sealMeta(key, { kind: 'text', text: 'briefly' });
+  try {
+    const put = async (seconds) => (await (await fetch(`${base}/api/item?room=${room}`, {
+      method: 'POST',
+      headers: seconds === null ? { 'x-meta': meta } : { 'x-meta': meta, 'x-keep': String(seconds) },
+    })).json());
+
+    const short = await put(7200 / 2);
+    const greedy = await put(604_800); // a week, from a server that allows two hours
+    const silent = await put(null);
+
+    assert.ok(short.expiresAt - Date.now() <= 3600_000 + 2000, 'an hour stays an hour');
+    assert.ok(greedy.expiresAt - Date.now() <= 7200_000 + 2000, 'clamped to the ceiling');
+    assert.equal(silent.expiresAt, undefined, 'no header means the store default');
+
+    // Wind one past its deadline and it goes, while its neighbours stay.
+    server.store.items.find((i) => i.id === short.id).expiresAt = Date.now() - 1;
+    const left = server.store.list(room).map((i) => i.id);
+    assert.ok(!left.includes(short.id));
+    assert.deepEqual(left.sort(), [greedy.id, silent.id].sort());
+  } finally {
+    await done();
+  }
+});
+
+test('a sign-in lasts as long as it was asked to, and survives a restart', async () => {
+  const dir = tmp();
+  const first = createServer({ dir, pin: 'open-sesame' });
+  await new Promise((r) => first.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${first.address().port}`;
+  const { room } = await deriveIdentity(newCode());
+
+  try {
+    const res = await fetch(`${base}/api/auth`, {
+      method: 'POST',
+      headers: { 'x-session-ttl': '7200' },
+      body: 'open-sesame',
+    });
+    const setCookie = res.headers.getSetCookie()[0];
+    assert.match(setCookie, /Max-Age=7200/);
+    assert.match(setCookie, /HttpOnly/);
+    assert.match(setCookie, /SameSite=Strict/);
+    assert.equal((await res.json()).seconds, 7200);
+
+    const cookie = setCookie.split(';')[0];
+    assert.equal((await fetch(`${base}/api/items?room=${room}`, { headers: { cookie } })).status, 200);
+
+    // The secret lives next to the data, so the same cookie still works after a
+    // redeploy — the whole point of not keeping it in memory.
+    await new Promise((r) => first.close(r));
+    const second = createServer({ dir, pin: 'open-sesame' });
+    await new Promise((r) => second.listen(0, '127.0.0.1', r));
+    const again = `http://127.0.0.1:${second.address().port}`;
+    assert.equal((await fetch(`${again}/api/items?room=${room}`, { headers: { cookie } })).status, 200);
+
+    assert.match(fs.statSync(path.join(dir, 'secret')).mode.toString(8), /600$/);
+    await new Promise((r) => second.close(r));
+  } finally {
+    if (first.listening) await new Promise((r) => first.close(r));
+  }
+});
+
+test('guessing at passwords and share tokens runs out of road fast', async () => {
+  const { base, done } = await serve({ pin: 'right' });
+  try {
+    const tries = [];
+    for (let i = 0; i < 20; i++) {
+      tries.push((await fetch(`${base}/api/auth`, { method: 'POST', body: `wrong-${i}` })).status);
+    }
+    assert.ok(tries.includes(429), 'the password door closes');
+    assert.ok(tries.filter((s) => s === 401).length <= 12, 'and not after many tries');
+  } finally {
+    await done();
+  }
+});
+
+test('the response headers lock the page down', async () => {
+  const { base, done } = await serve();
+  try {
+    const res = await fetch(`${base}/`);
+    const csp = res.headers.get('content-security-policy');
+    for (const directive of ["default-src 'self'", "style-src 'self'", "script-src 'self'", "object-src 'none'", "frame-ancestors 'none'", "form-action 'none'", "base-uri 'none'"]) {
+      assert.ok(csp.includes(directive), `CSP is missing ${directive}`);
+    }
+    assert.equal(res.headers.get('x-frame-options'), 'DENY');
+    assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(res.headers.get('cross-origin-opener-policy'), 'same-origin');
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal((await fetch(`${base}/api/auth`)).headers.get('cache-control'), 'no-store');
+
+    // The markup must not need the inline allowances the policy refuses.
+    const page = await (await fetch(`${base}/`)).text();
+    assert.ok(!/<style[\s>]/.test(page) && !/\sstyle="/.test(page), 'no inline styles to be blocked');
+    assert.ok(!/<script(?![^>]*\ssrc=)/.test(page), 'no inline scripts to be blocked');
+  } finally {
+    await done();
+  }
+});
+
 /** A minimal SSE reader — enough to watch one room the way a device does. */
 async function watch(base, room) {
   const res = await fetch(`${base}/api/events?room=${room}`);

@@ -1,0 +1,85 @@
+/* One sheet for both pages. It lives in a file rather than a <style> block so
+   the Content-Security-Policy can refuse inline styles outright — which is also
+   why there is not a single style="" attribute in the markup. */
+:root {
+  --bg: #f6f6f4; --card: #fff; --ink: #16161a; --dim: #6b6b76;
+  --line: #e2e2dd; --accent: #2f6f4f; --bad: #a33131;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #16161a; --card: #1e1e24; --ink: #f2f2f0; --dim: #9a9aa5;
+          --line: #2e2e37; --accent: #6cc294; --bad: #e57373; }
+}
+* { box-sizing: border-box; }
+/* .panel and #gate set display, which otherwise beats the UA sheet's [hidden]. */
+[hidden] { display: none !important; }
+body {
+  margin: 0; padding: max(1rem, env(safe-area-inset-top)) 1rem 4rem; background: var(--bg); color: var(--ink);
+  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main, form { max-width: 44rem; margin: 0 auto; }
+h1 { font-size: 1.1rem; margin: 0; letter-spacing: .02em; }
+h2 { font-size: 1rem; margin: 0 0 .25rem; }
+header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+header .lock { color: var(--accent); font-size: .8rem; }
+textarea {
+  width: 100%; min-height: 6.5rem; padding: .75rem; resize: vertical; color: inherit;
+  background: var(--card); border: 1px solid var(--line); border-radius: .6rem; font: inherit;
+}
+textarea:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.row { display: flex; gap: .5rem; align-items: center; margin: .5rem 0 1.5rem; flex-wrap: wrap; }
+.row.tight { margin: .25rem 0 0; }
+button, select {
+  font: inherit; padding: .5rem .9rem; border-radius: .5rem; border: 1px solid var(--line);
+  background: var(--card); color: inherit; cursor: pointer; min-height: 2.75rem;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+.grow { flex: 1; }
+.wide { flex-basis: 100%; }
+.hint { color: var(--dim); font-size: .8rem; }
+.warn { color: var(--bad); }
+ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+li, .panel {
+  background: var(--card); border: 1px solid var(--line); border-radius: .6rem;
+  padding: .7rem .8rem; display: grid; gap: .4rem;
+}
+li .meta { display: flex; gap: .6rem; align-items: center; font-size: .75rem; color: var(--dim); flex-wrap: wrap; }
+li .meta .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+pre {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto;
+  font: .875rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.shot {
+  display: block; max-width: 100%; max-height: 18rem; width: auto;
+  border-radius: .4rem; background: var(--bg);
+}
+.empty { color: var(--dim); text-align: center; padding: 2.5rem 1rem; border: 1px dashed var(--line); border-radius: .6rem; }
+body.dragging { outline: 3px dashed var(--accent); outline-offset: -6px; }
+#status { position: fixed; inset: auto 0 1rem; text-align: center; pointer-events: none; }
+#status b {
+  background: var(--ink); color: var(--bg); padding: .4rem .8rem; border-radius: 2rem; font-size: .8rem; font-weight: 500;
+}
+#card { margin-bottom: 1.5rem; }
+#code {
+  font: 700 1.35rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em; user-select: all; overflow-wrap: anywhere;
+}
+#gate { max-width: 26rem; margin: 12vh auto 0; display: grid; gap: 1rem; }
+#join { display: flex; gap: .5rem; flex-wrap: wrap; }
+input {
+  font: inherit; padding: .6rem; border-radius: .5rem; border: 1px solid var(--line);
+  background: var(--bg); color: inherit; min-width: 0; flex: 1;
+}
+#joincode { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; text-transform: uppercase; }
+#insecure { max-width: 26rem; margin: 20vh auto; text-align: center; color: var(--bad); }
+#pinform { max-width: 20rem; margin: 20vh auto; }
+
+/* The share page only ever shows one thing, handed to someone with no pairing. */
+.share { max-width: 40rem; margin: 6vh auto 0; display: grid; gap: 1rem; }
+.share .panel { padding: 1rem; gap: .7rem; }
+.share pre { max-height: 24rem; }
+.share img, .share video { display: block; max-width: 100%; max-height: 70vh; border-radius: .4rem; }
+.share audio { width: 100%; }
+.share button { justify-self: start; }

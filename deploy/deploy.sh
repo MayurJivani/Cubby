@@ -21,6 +21,17 @@ tar czf - Dockerfile package.json src bin deploy | ssh ssh.futile.studio '
   rm -rf ~/cubby-setup
   cp -r "$tmp/deploy" ~/cubby-setup
 
+  # The server password and the superuser key are generated on the box, once,
+  # and never travel with the source. Read them with: cat ~/.cubby-secrets
+  secrets="$HOME/.cubby-secrets"
+  if [ ! -f "$secrets" ]; then
+    ( umask 077
+      printf "CUBBY_PIN=%s\nCUBBY_ADMIN_KEY=%s\n" \
+        "$(openssl rand -base64 24 | tr -dc A-Za-z0-9 | cut -c1-16)" \
+        "$(openssl rand -base64 64 | tr -dc A-Za-z0-9 | cut -c1-44)" > "$secrets" )
+    echo "cubby: generated $secrets — cat it to get the password and superuser key"
+  fi
+
   docker build -q -t cubby:latest "$tmp" >/dev/null
   docker rm -f cubby >/dev/null 2>&1 || true
   docker run -d \
@@ -31,8 +42,10 @@ tar czf - Dockerfile package.json src bin deploy | ssh ssh.futile.studio '
     --memory 512m \
     --publish 127.0.0.1:4747:4747 \
     --volume cubby-data:/data \
+    --env-file "$secrets" \
     --env CUBBY_HOURS=24 \
     --env CUBBY_MB=2048 \
+    --env CUBBY_MAX_KEEP_HOURS=168 \
     cubby:latest >/dev/null
 
   # Come back and check, rather than trusting that "docker run" meant "serving".

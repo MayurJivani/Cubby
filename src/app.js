@@ -10,12 +10,22 @@ import {
 const MAX_FILE = 80 * 1024 * 1024;
 const SAVED = 'cubby.code';
 const ADMIN = 'cubby.admin';
+const KEEP = 'cubby.keep';
 const SHARES = [
   ['Once', { once: true }],
   ['1 hour', { ttl: 3600 }],
   ['24 hours', { ttl: 86_400 }],
   ['7 days', { ttl: 604_800 }],
 ];
+// How long a drop lives, and how long a sign-in lasts. Same ladder for both.
+const SPANS = [
+  ['2 hours', 7200],
+  ['8 hours', 28_800],
+  ['24 hours', 86_400],
+  ['2 days', 172_800],
+  ['7 days', 604_800],
+];
+const DEFAULT_KEEP = 86_400;
 const OVERHEAD = 12 + 16; // iv + GCM tag, the difference between file size and stored size
 
 const $ = (id) => document.getElementById(id);
@@ -47,6 +57,16 @@ const ago = (t) => {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return new Date(t).toLocaleDateString();
+};
+
+/** What the server says is left of this item's life, if it was given one. */
+const left = (expiresAt) => {
+  if (!expiresAt) return '';
+  const s = (expiresAt - Date.now()) / 1000;
+  if (s <= 0) return 'going now';
+  if (s < 3600) return `gone in ${Math.ceil(s / 60)}m`;
+  if (s < 86_400) return `gone in ${Math.round(s / 3600)}h`;
+  return `gone in ${Math.round(s / 86_400)}d`;
 };
 
 async function metaOf(item) {
@@ -118,7 +138,8 @@ async function render(items) {
     const what = !meta ? "can't decrypt" : meta.kind === 'file' ? meta.name : 'text';
     // item.size is the ciphertext on the server; show what the file actually is.
     const plainSize = item.blob ? item.size - OVERHEAD : new Blob([meta?.text ?? '']).size;
-    label.textContent = `${what} · ${bytes(Math.max(plainSize, 0))} · ${ago(item.at)}`;
+    label.textContent = [what, bytes(Math.max(plainSize, 0)), ago(item.at), left(item.expiresAt)]
+      .filter(Boolean).join(' · ');
     bar.append(label);
 
     if (meta?.kind === 'text') {
@@ -168,6 +189,7 @@ async function render(items) {
 }
 
 const admin = () => localStorage.getItem(ADMIN) || '';
+const keep = () => Number(localStorage.getItem(KEEP)) || DEFAULT_KEEP;
 
 function headers(extra) {
   // The superuser key only ever lifts a limit; it is not a login, and the
@@ -175,10 +197,29 @@ function headers(extra) {
   return admin() ? { ...extra, 'x-admin': admin() } : extra;
 }
 
+/** Fill a <select> from the ladder, remembering the choice on this device. */
+function spans(el, store, chosen, onPick) {
+  el.replaceChildren(...SPANS.map(([name, seconds]) => {
+    const option = document.createElement('option');
+    option.value = String(seconds);
+    option.textContent = name;
+    option.selected = seconds === chosen;
+    return option;
+  }));
+  el.onchange = () => {
+    if (store) localStorage.setItem(store, el.value);
+    onPick?.(Number(el.value));
+  };
+}
+
 async function put(meta, body) {
   const res = await api(`/api/item?room=${room}`, {
     method: 'POST',
-    headers: headers({ 'x-meta': await sealMeta(key, meta), 'Content-Type': 'application/octet-stream' }),
+    headers: headers({
+      'x-meta': await sealMeta(key, meta),
+      'x-keep': String(keep()),
+      'Content-Type': 'application/octet-stream',
+    }),
     body: body ?? new Uint8Array(),
   });
   if (!res.ok) throw new Error(`${res.status}`);
@@ -284,6 +325,7 @@ function wire() {
   $('clear').onclick = () => confirm('Delete everything in this cubby?') && api(`/api/items?room=${room}`, { method: 'DELETE' });
 
   $('pair').onclick = () => $('card').toggleAttribute('hidden');
+  spans($('keep'), KEEP, keep(), (seconds) => toast(`New drops will keep for ${SPANS.find(([, s]) => s === seconds)[0]}`));
 
   $('adminkey').value = admin();
   $('adminkey').onchange = () => {
@@ -378,15 +420,25 @@ async function main() {
   else pairing();
 }
 
-// The pin, when the deployment has one, gates the page before any of this.
+// The password, when the deployment has one, is the door to the server and is
+// asked for before any of the above. It is not what encrypts anything.
 const auth = await (await api('/api/auth')).json();
 if (auth.needsPin && !auth.ok) {
   $('pinform').hidden = false;
   $('pin').focus();
+  spans($('pinkeep'), null, DEFAULT_KEEP);
   $('pinform').onsubmit = async (e) => {
     e.preventDefault();
-    const res = await api('/api/auth', { method: 'POST', body: $('pin').value });
-    if (!res.ok) { $('pinerr').textContent = 'Wrong PIN.'; $('pin').select(); return; }
+    const res = await api('/api/auth', {
+      method: 'POST',
+      headers: { 'x-session-ttl': $('pinkeep').value },
+      body: $('pin').value,
+    });
+    if (!res.ok) {
+      $('pinerr').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : 'Wrong password.';
+      $('pin').select();
+      return;
+    }
     $('pinform').hidden = true;
     await main();
   };

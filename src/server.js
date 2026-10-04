@@ -17,10 +17,15 @@ const STATIC = {
   '/icon.svg': ['image/svg+xml', fs.readFileSync(path.join(HERE, 'icon.svg'))],
   '/share.html': ['text/html; charset=utf-8', fs.readFileSync(path.join(HERE, 'share.html'))],
   '/share.js': ['text/javascript; charset=utf-8', fs.readFileSync(path.join(HERE, 'share.js'))],
+  '/style.css': ['text/css; charset=utf-8', fs.readFileSync(path.join(HERE, 'style.css'))],
 };
 const MAX_META = 8 * 1024;
 const SHARE = /^[A-Za-z0-9_-]{16,64}$/;
-const MAX_SHARE_MS = 7 * 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_SHARE_MS = WEEK_MS;
+// Signing in and guessing a share token are the two things worth grinding at,
+// so they get their own, much smaller budget than ordinary traffic.
+const GUESS_RATE = 12;
 
 export function createServer({
   dir = 'cubby-data',
@@ -29,12 +34,14 @@ export function createServer({
   rate = 240,
   maxItemBytes = 80 * 1024 * 1024,
   adminKey = '',
+  maxTtlMs = WEEK_MS,
   ...limits
 } = {}) {
   const store = new Store({ dir, ...limits });
-  // Session token derives from the pin plus a per-run secret, so restarting invalidates old cookies.
-  const secret = randomBytes(16);
-  const token = pin ? createHash('sha256').update(secret).update(pin).digest('hex') : '';
+  // The session token is an HMAC of the password under a secret that lives in
+  // the data directory, so a redeploy does not sign every device out — and
+  // deleting that one file does.
+  const token = pin ? createHash('sha256').update(serverSecret(dir)).update(pin).digest('hex') : '';
 
   const clients = new Set();
   store.on('change', (room) => {
@@ -50,9 +57,31 @@ export function createServer({
     // Stored bytes are attacker-supplied and served back to browsers. Nothing
     // here is ever script, so say so and mean it.
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    // img-src covers the decrypted previews, which are blob: URLs made in the page.
-    res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob:");
+    // Everything comes from this origin except the decrypted previews, which are
+    // blob: URLs minted in the page. No inline script, no inline style, nothing
+    // embeddable, no form that could post elsewhere.
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'",
+      "style-src 'self'",
+      "script-src 'self'",
+      "connect-src 'self'",
+      "img-src 'self' blob:",
+      'media-src blob:',
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'none'",
+    ].join('; '));
     res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
+    // Ciphertext is not worth caching, and a share handed back once must never
+    // sit in a proxy for the next person.
+    if (url.pathname.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+    // Only meaningful once something terminates TLS; harmless to state otherwise.
+    if (secure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 
     try {
       const asset = STATIC[url.pathname];
@@ -64,19 +93,35 @@ export function createServer({
       // the token is the only thing they hold, so it is checked before the
       // room scoping below and never gated by the pin.
       const opening = route.match(/^POST \/api\/share\/([A-Za-z0-9_-]+)$/);
-      if (opening) return openShare(res, opening[1]);
+      if (opening) {
+        if (spend(`guess:${clientKey(req, trustProxy)}`, buckets, GUESS_RATE)) return json(res, 429, { error: 'slow down' });
+        return openShare(res, opening[1]);
+      }
       if (req.method === 'GET' && url.pathname.startsWith('/s/')) {
         return send(res, 200, STATIC['/share.html'][0], STATIC['/share.html'][1]);
       }
 
-      if (route === 'GET /api/auth') return json(res, 200, { needsPin: Boolean(pin), ok: authed(req) });
+      if (route === 'GET /api/auth') {
+        return json(res, 200, { needsPin: Boolean(pin), ok: authed(req), maxKeepSeconds: maxTtlMs / 1000 });
+      }
       if (route === 'POST /api/auth') {
+        if (spend(`guess:${clientKey(req, trustProxy)}`, buckets, GUESS_RATE)) return json(res, 429, { error: 'slow down' });
         const given = (await readBody(req, 1024)).toString('utf8').trim();
-        if (!pin || !equals(given, pin)) return json(res, 401, { error: 'wrong pin' });
-        res.setHeader('Set-Cookie', `cubby=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`);
+        if (!pin || !equals(given, pin)) return json(res, 401, { error: 'wrong password' });
+        // How long this browser stays signed in is the person's choice, bounded
+        // by the server's.
+        const seconds = Math.floor(clampTtl(req.headers['x-session-ttl'], maxTtlMs) / 1000);
+        res.setHeader('Set-Cookie', [
+          `cubby=${token}`, 'HttpOnly', 'SameSite=Strict', 'Path=/',
+          `Max-Age=${seconds}`, ...(secure(req) ? ['Secure'] : []),
+        ].join('; '));
+        return json(res, 200, { ok: true, seconds });
+      }
+      if (route === 'DELETE /api/auth') {
+        res.setHeader('Set-Cookie', 'cubby=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
         return json(res, 200, { ok: true });
       }
-      if (!authed(req)) return json(res, 401, { error: 'pin required' });
+      if (!authed(req)) return json(res, 401, { error: 'sign in first' });
 
       if (route === 'POST /api/share') {
         const meta = String(req.headers['x-meta'] || '');
@@ -118,6 +163,11 @@ export function createServer({
       if (route === 'POST /api/item') {
         const meta = String(req.headers['x-meta'] || '');
         if (!meta || meta.length > MAX_META) return json(res, 400, { error: 'bad meta' });
+        // The sender picks how long this one lives; the server picks the ceiling.
+        // No header means the server's own default.
+        const asked = req.headers['x-keep'];
+        const expiresAt = asked ? Date.now() + clampTtl(asked, maxTtlMs) : undefined;
+
         // A body means there is a blob; text-only items live entirely in meta.
         // Which one this is comes from what actually arrived, not from a
         // Content-Length the sender may never have set.
@@ -125,11 +175,12 @@ export function createServer({
         try {
           const out = fs.createWriteStream(pending.path);
           await pipeline(cap(req, limitFor(req)), out);
-          if (out.bytesWritten === 0) {
-            store.drop(pending.id);
-            return json(res, 200, store.add({ room, id: pending.id, meta }));
-          }
-          return json(res, 200, store.add({ room, id: pending.id, meta, size: out.bytesWritten, blob: true }));
+          const blobbed = out.bytesWritten > 0;
+          if (!blobbed) store.drop(pending.id);
+          return json(res, 200, store.add({
+            room, id: pending.id, meta, expiresAt,
+            size: blobbed ? out.bytesWritten : 0, blob: blobbed,
+          }));
         } catch (err) {
           store.drop(pending.id);
           throw err;
@@ -219,6 +270,35 @@ function send(res, status, type, body) {
 
 function json(res, status, body) {
   send(res, status, 'application/json', Buffer.from(JSON.stringify(body)));
+}
+
+/** A requested lifetime in seconds, read charitably and then held to a ceiling. */
+function clampTtl(header, ceiling) {
+  const ms = Number(header) * 1000;
+  if (!Number.isFinite(ms) || ms <= 0) return ceiling;
+  return Math.min(ms, ceiling);
+}
+
+/** True when the browser is talking TLS, directly or through a trusted proxy. */
+function secure(req) {
+  return Boolean(req.socket.encrypted) || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+}
+
+/**
+ * A long-lived secret for signing sessions, kept beside the data rather than in
+ * memory — otherwise every deploy signs every device out. 0600, because the
+ * whole point is that only this process reads it.
+ */
+function serverSecret(dir) {
+  const file = path.join(dir, 'secret');
+  try {
+    return fs.readFileSync(file);
+  } catch {
+    const made = randomBytes(32);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, made, { mode: 0o600 });
+    return made;
+  }
 }
 
 function equals(a, b) {

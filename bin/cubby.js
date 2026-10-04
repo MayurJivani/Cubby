@@ -13,6 +13,7 @@ const { values } = parseArgs({
     mb: { type: 'string', default: env.CUBBY_MB || '512' },
     'max-item-mb': { type: 'string', default: env.CUBBY_MAX_ITEM_MB || '80' },
     'admin-key': { type: 'string', default: env.CUBBY_ADMIN_KEY || '' },
+    'max-keep-hours': { type: 'string', default: env.CUBBY_MAX_KEEP_HOURS || '168' },
     'trust-proxy': { type: 'boolean', default: env.CUBBY_TRUST_PROXY === '1' },
     help: { type: 'boolean', short: 'h' },
   },
@@ -26,7 +27,8 @@ if (values.help) {
 Open the printed URL, start a cubby, and type the pairing code into your other
 device once. The server stores ciphertext only; the code never reaches it.
 Every flag also reads from the environment: PORT, CUBBY_DIR, CUBBY_PIN,
-CUBBY_HOURS, CUBBY_MB, CUBBY_MAX_ITEM_MB, CUBBY_ADMIN_KEY, CUBBY_TRUST_PROXY=1.`);
+CUBBY_HOURS, CUBBY_MB, CUBBY_MAX_ITEM_MB, CUBBY_ADMIN_KEY,
+CUBBY_MAX_KEEP_HOURS, CUBBY_TRUST_PROXY=1.`);
   process.exit(0);
 }
 
@@ -38,6 +40,7 @@ const server = createServer({
   maxBytes: Number(values.mb) * 1024 * 1024,
   maxItemBytes: Number(values['max-item-mb']) * 1024 * 1024,
   adminKey: values['admin-key'],
+  maxTtlMs: Number(values['max-keep-hours']) * 3600_000,
 });
 
 server.listen(Number(values.port), '0.0.0.0', () => {

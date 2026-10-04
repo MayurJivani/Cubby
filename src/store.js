@@ -69,8 +69,10 @@ export class Store extends EventEmitter {
 
   add({ room, id = randomUUID(), meta, size = 0, blob = false, token, expiresAt, once }) {
     const item = { id, room, meta, size, blob, at: Date.now() };
-    // A share carries its own deadline and its own way of dying.
-    if (token) Object.assign(item, { token, expiresAt, once: Boolean(once) });
+    // An item may carry its own deadline instead of the store's default; a share
+    // also carries its own way of dying.
+    if (expiresAt) item.expiresAt = expiresAt;
+    if (token) Object.assign(item, { token, once: Boolean(once) });
     this.items.unshift(item);
     this.prune();
     this.#changed(room);
@@ -131,7 +133,9 @@ export class Store extends EventEmitter {
         else (bytes += item.size, kept.push(item));
         continue;
       }
-      if (item.at < cutoff || count >= this.maxItems || bytes + item.size > this.maxBytes) {
+      // Its own deadline if it was given one, the store's default otherwise.
+      const expired = item.expiresAt ? item.expiresAt < now : item.at < cutoff;
+      if (expired || count >= this.maxItems || bytes + item.size > this.maxBytes) {
         dropped.push(item);
       } else {
         perRoom.set(item.room, count + 1);
