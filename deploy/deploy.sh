@@ -46,7 +46,7 @@ tar czf - Dockerfile package.json src bin deploy | ssh ssh.futile.studio '
 
   # Come back and check, rather than trusting that "docker run" meant "serving".
   sleep 2
-  code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4747/)
+  code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4747/ || true)
   [ "$code" = "200" ] || { echo "cubby: not serving (HTTP $code)"; docker logs --tail 30 cubby; exit 1; }
   echo "cubby: $(docker ps --filter name=cubby --format "{{.Status}}"), serving on 127.0.0.1:4747"
   echo "cubby: installer staged at ~/cubby-setup/install.sh"
