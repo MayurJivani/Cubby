@@ -12,7 +12,7 @@ const { values } = parseArgs({
     hours: { type: 'string', default: env.CUBBY_HOURS || '24' },
     mb: { type: 'string', default: env.CUBBY_MB || '512' },
     'max-item-mb': { type: 'string', default: env.CUBBY_MAX_ITEM_MB || '80' },
-    'admin-key': { type: 'string', default: env.CUBBY_ADMIN_KEY || '' },
+    'admin-proof': { type: 'string', default: env.CUBBY_ADMIN_PROOF || '' },
     'max-keep-hours': { type: 'string', default: env.CUBBY_MAX_KEEP_HOURS || '168' },
     'trust-proxy': { type: 'boolean', default: env.CUBBY_TRUST_PROXY === '1' },
     help: { type: 'boolean', short: 'h' },
@@ -22,12 +22,17 @@ const { values } = parseArgs({
 if (values.help) {
   console.log(`cubby — an end-to-end encrypted drop box for your own devices
 
-  cubby [--port 4747] [--dir cubby-data] [--pin 1234] [--hours 24] [--mb 512] [--max-item-mb 80] [--admin-key KEY] [--trust-proxy]
+  cubby [--port 4747] [--dir cubby-data] [--pin 1234] [--hours 24] [--mb 512] [--max-item-mb 80] [--admin-proof HASH] [--trust-proxy]
 
 Open the printed URL, start a cubby, and type the pairing code into your other
 device once. The server stores ciphertext only; the code never reaches it.
+
+--admin-proof takes the fingerprint of one pairing code, and whoever opens that
+code is the superuser: no file size limit, no expiry limit, no rate limit. Get
+the fingerprint without handing the code over with:
+  node -e 'import("./src/crypto.js").then(async c => console.log(await c.fingerprint((await c.deriveIdentity("XXXX-XXXX-XXXX-XXXX")).proof)))'
 Every flag also reads from the environment: PORT, CUBBY_DIR, CUBBY_PIN,
-CUBBY_HOURS, CUBBY_MB, CUBBY_MAX_ITEM_MB, CUBBY_ADMIN_KEY,
+CUBBY_HOURS, CUBBY_MB, CUBBY_MAX_ITEM_MB, CUBBY_ADMIN_PROOF,
 CUBBY_MAX_KEEP_HOURS, CUBBY_TRUST_PROXY=1.`);
   process.exit(0);
 }
@@ -39,7 +44,7 @@ const server = createServer({
   ttlMs: Number(values.hours) * 3600_000,
   maxBytes: Number(values.mb) * 1024 * 1024,
   maxItemBytes: Number(values['max-item-mb']) * 1024 * 1024,
-  adminKey: values['admin-key'],
+  adminProof: values['admin-proof'],
   maxTtlMs: Number(values['max-keep-hours']) * 3600_000,
 });
 

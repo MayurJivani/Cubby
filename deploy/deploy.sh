@@ -21,16 +21,12 @@ tar czf - Dockerfile package.json src bin deploy | ssh ssh.futile.studio '
   rm -rf ~/cubby-setup
   cp -r "$tmp/deploy" ~/cubby-setup
 
-  # The server password and the superuser key are generated on the box, once,
-  # and never travel with the source. Read them with: cat ~/.cubby-secrets
+  # The site is open to anyone, so there is no password here. ~/.cubby-secrets
+  # holds only CUBBY_ADMIN_PROOF: the fingerprint of one pairing code, which
+  # identifies the superuser without the server ever holding that code.
+  # (No apostrophes in here: the whole block is a single-quoted ssh argument.)
   secrets="$HOME/.cubby-secrets"
-  if [ ! -f "$secrets" ]; then
-    ( umask 077
-      printf "CUBBY_PIN=%s\nCUBBY_ADMIN_KEY=%s\n" \
-        "$(openssl rand -base64 24 | tr -dc A-Za-z0-9 | cut -c1-16)" \
-        "$(openssl rand -base64 64 | tr -dc A-Za-z0-9 | cut -c1-44)" > "$secrets" )
-    echo "cubby: generated $secrets — cat it to get the password and superuser key"
-  fi
+  [ -f "$secrets" ] || { echo "cubby: missing $secrets (needs CUBBY_ADMIN_PROOF)"; exit 1; }
 
   docker build -q -t cubby:latest "$tmp" >/dev/null
   docker rm -f cubby >/dev/null 2>&1 || true

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
 import { createServer } from '../src/server.js';
-import { newCode, normalize, format, deriveIdentity, encrypt, decrypt, sealMeta, openMeta, newShareKey } from '../src/crypto.js';
+import { newCode, normalize, format, deriveIdentity, encrypt, decrypt, sealMeta, openMeta, newShareKey, fingerprint } from '../src/crypto.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cubby-'));
 const ROOM = 'test-room-1';
@@ -385,29 +385,74 @@ test('share creation, one-time burn-after-read, and crawler protection', async (
   }
 });
 
-test('superuser key bypasses per-item upload size cap', async () => {
-  const adminKey = 'super-secret-admin-key';
-  const { base, server, done } = await serve({ maxItemBytes: 32, maxBytes: 1024, adminKey });
-  const { room, key } = await deriveIdentity(newCode());
+test('one pairing code is the superuser, and the server never learns it', async () => {
+  const boss = await deriveIdentity(newCode());
+  const anyone = await deriveIdentity(newCode());
+  const adminProof = await fingerprint(boss.proof);
+  const { base, server, done } = await serve({ maxItemBytes: 32, maxBytes: 4096, maxTtlMs: 3600_000, rate: 4, adminProof });
 
   try {
-    const meta = await sealMeta(key, { kind: 'file', name: 'medium.bin' });
+    // The server holds a hash, not the code and not the proof.
+    assert.equal(adminProof.length, 64);
+    assert.notEqual(adminProof, boss.proof);
+
     const payload = Buffer.alloc(64);
-
-    const resStandard = await fetch(`${base}/api/item?room=${room}`, {
+    const send = (who, extra) => fetch(`${base}/api/item?room=${who.room}`, {
       method: 'POST',
-      headers: { 'x-meta': meta },
+      headers: { 'x-meta': 'c2VhbGVk', ...extra },
       body: payload,
     });
-    assert.equal(resStandard.status, 413);
 
-    const resSuper = await fetch(`${base}/api/item?room=${room}`, {
-      method: 'POST',
-      headers: { 'x-meta': meta, 'x-admin': adminKey },
-      body: payload,
-    });
-    assert.equal(resSuper.status, 200);
-    assert.equal(server.store.list(room).length, 1);
+    // Over the per-file cap: refused for anyone, fine for the boss.
+    assert.equal((await send(anyone, { 'x-proof': anyone.proof })).status, 413);
+    assert.equal((await send(boss, { 'x-proof': boss.proof })).status, 200);
+    assert.equal(server.store.list(boss.room).length, 1);
+
+    // A made-up proof is just not the superuser.
+    assert.equal((await send(anyone, { 'x-proof': 'not-the-proof' })).status, 413);
+
+    // Keep forever: the boss may, anyone else is clamped to the ceiling.
+    const kept = await (await fetch(`${base}/api/item?room=${boss.room}`, {
+      method: 'POST', headers: { 'x-meta': 'c2VhbGVk', 'x-keep': '0', 'x-proof': boss.proof },
+    })).json();
+    assert.equal(kept.expiresAt, 0, 'no deadline at all');
+
+    const clamped = await (await fetch(`${base}/api/item?room=${anyone.room}`, {
+      method: 'POST', headers: { 'x-meta': 'c2VhbGVk', 'x-keep': '0', 'x-proof': anyone.proof },
+    })).json();
+    assert.ok(clamped.expiresAt > Date.now(), 'everyone else still gets a deadline');
+    assert.ok(clamped.expiresAt - Date.now() <= 3600_000 + 2000);
+
+    // An item with no deadline survives a prune that clears the rest.
+    server.store.items.filter((i) => i.expiresAt !== 0).forEach((i) => { i.expiresAt = Date.now() - 1; });
+    assert.deepEqual(server.store.list(boss.room).map((i) => i.id), [kept.id]);
+
+    // And the rate limiter does not apply to the boss.
+    const mine = [];
+    const theirs = [];
+    for (let i = 0; i < 8; i++) {
+      mine.push((await fetch(`${base}/api/me`, { headers: { 'x-proof': boss.proof } })).status);
+      theirs.push((await fetch(`${base}/api/me`, { headers: { 'x-proof': anyone.proof } })).status);
+    }
+    assert.ok(!mine.includes(429), 'the superuser is never throttled');
+    assert.ok(theirs.includes(429), 'everyone else is');
+  } finally {
+    await done();
+  }
+});
+
+test('/api/me tells a device what it may do', async () => {
+  const boss = await deriveIdentity(newCode());
+  const { base, done } = await serve({ maxItemBytes: 1024, maxTtlMs: 7200_000, adminProof: await fingerprint(boss.proof) });
+  try {
+    const plain = await (await fetch(`${base}/api/me`)).json();
+    assert.deepEqual(plain, { admin: false, maxItemBytes: 1024, maxKeepSeconds: 7200 });
+
+    const mine = await (await fetch(`${base}/api/me`, { headers: { 'x-proof': boss.proof } })).json();
+    assert.equal(mine.admin, true);
+    assert.equal(mine.maxKeepSeconds, 0, 'no ceiling');
+    assert.ok(mine.maxItemBytes > 1024);
+    assert.equal(typeof mine.rooms, 'number', 'and a look at the server');
   } finally {
     await done();
   }

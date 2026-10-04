@@ -1,9 +1,11 @@
 # Cubby
 
+[![Live](https://img.shields.io/badge/live-cubby.futile.studio-5a9e6f)](https://cubby.futile.studio)
 ![Node](https://img.shields.io/badge/node-%E2%89%A520-5a9e6f)
 ![Dependencies](https://img.shields.io/badge/dependencies-none-5a9e6f)
 ![Crypto](https://img.shields.io/badge/crypto-AES--GCM%20%2B%20PBKDF2-5a9e6f)
 ![License](https://img.shields.io/badge/license-MIT-5a9e6f)
+![Last commit](https://img.shields.io/github/last-commit/MayurJivani/Cubby?color=5a9e6f)
 
 A drop box for your own devices. Paste text or drop files on the laptop, pick them
 up on the phone a second later. Everything is encrypted in the browser before it
@@ -57,6 +59,31 @@ on pairing, and ships a manifest: add it to your home screen and the pairing is
 exempt for good. The pairing card tells you which of the two you got. Either way
 the code is right there to copy — it's the only way back in if a browser is wiped,
 so it's worth writing down once.
+
+## Open to anyone, owned by one code
+
+The site is public: open it, start a cubby, use it. No account, no email, no sign
+up — a pairing code is the whole of your identity here, and the limits in the
+flags table are what keep an open server survivable.
+
+One code is the superuser. The server is configured with
+`--admin-proof`, the SHA-256 fingerprint of a third slice of that code's PBKDF2
+output — so any device that opens that code gets no file size limit, no expiry
+limit (including **Forever**), no rate limit, and a count of what the server is
+holding. Nobody had to send the code anywhere: the server holds a hash of a
+derivative of it, which is useless for reading a cubby and useless for pretending
+to be its owner.
+
+Get the fingerprint for a code without handing the code over:
+
+```bash
+node -e 'import("./src/crypto.js").then(async c =>
+  console.log(await c.fingerprint((await c.deriveIdentity("XXXX-XXXX-XXXX-XXXX")).proof)))'
+```
+
+The proof rides in a request header rather than the path, so it stays out of
+access logs — unlike the room id, which is in the query string and is therefore
+only ever a name, never a permission.
 
 ## How long things stay
 
@@ -147,20 +174,21 @@ docker run -p 4747:4747 -v cubby-data:/data cubby
 | `--hours` | `CUBBY_HOURS` | `24` | how long an item survives (24 hrs default) |
 | `--mb` | `CUBBY_MB` | `512` | total size cap across all rooms |
 | `--max-item-mb` | `CUBBY_MAX_ITEM_MB` | `80` | per-item upload size cap for standard users |
-| `--admin-key` | `CUBBY_ADMIN_KEY` | none | the superuser key; lifts the per-file cap for whoever holds it |
+| `--admin-proof` | `CUBBY_ADMIN_PROOF` | none | fingerprint of the one pairing code that owns the server |
 | `--max-keep-hours` | `CUBBY_MAX_KEEP_HOURS` | `168` | ceiling on what a device may ask to keep |
 | `--trust-proxy` | `CUBBY_TRUST_PROXY=1` | off | rate-limit on `X-Forwarded-For`, not the proxy's socket |
 
-On a public deployment, `--pin` decides whether strangers can create rooms in your
-server at all. Without it the server is open — rate-limited to 240 requests a
-minute per client, capped in size, and self-emptying on a timer, but open.
+`--pin` decides whether strangers can use the server at all. Left unset — as it is
+on cubby.futile.studio — anyone can open the page and make their own cubby, held
+to the limits in the table: 80 MB a file, seven days at most, 240 requests a
+minute, and a volume cap across everyone.
 
 ## What it does
 
 - **Text both ways.** Type or paste, Send (or Ctrl/Cmd+Enter). Tap **Copy** on the
   other device.
 - **Files both ways.** Drop them on the page, pick them, or paste an image straight
-  from the clipboard. Encrypted client-side, up to 80 MB each (or unlimited per-item for superusers with admin key).
+  from the clipboard. Encrypted client-side, up to 80 MB each.
 - **Shareable Links.** Generate standalone `cubby.futile.studio` / `/s/<token>#<shareKey>` links with one-time view (burn-after-read upon explicit view) or time limits (1h, 24h, 7d). Re-encrypted so room keys are never exposed.
 - **Images show themselves.** Anything under 8 MB with an image type is fetched,
   decrypted, and drawn in the list — once per item, not once per redraw.

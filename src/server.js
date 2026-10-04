@@ -33,7 +33,9 @@ export function createServer({
   trustProxy = false,
   rate = 240,
   maxItemBytes = 80 * 1024 * 1024,
-  adminKey = '',
+  // sha256 of the proof slice of one pairing code. Whoever opens that code is
+  // the superuser; the server cannot read their cubby, or anyone's, either way.
+  adminProof = '',
   maxTtlMs = WEEK_MS,
   ...limits
 } = {}) {
@@ -87,7 +89,24 @@ export function createServer({
       const asset = STATIC[url.pathname];
       if (asset && req.method === 'GET') return send(res, 200, asset[0], asset[1]);
 
-      if (spend(clientKey(req, trustProxy), buckets, rate)) return json(res, 429, { error: 'slow down' });
+      // The superuser is not rate limited; everyone else shares the budget.
+      if (!isAdmin(req) && spend(clientKey(req, trustProxy), buckets, rate)) {
+        return json(res, 429, { error: 'slow down' });
+      }
+
+      // What this device may do, which is the only thing the page needs to know
+      // to show honest limits.
+      if (route === 'GET /api/me') {
+        const admin = isAdmin(req);
+        return json(res, 200, {
+          admin,
+          maxItemBytes: admin ? store.maxBytes : Math.min(maxItemBytes, store.maxBytes),
+          maxKeepSeconds: admin ? 0 : maxTtlMs / 1000,
+          items: admin ? store.items.length : undefined,
+          bytes: admin ? store.items.reduce((n, it) => n + it.size, 0) : undefined,
+          rooms: admin ? new Set(store.items.map((it) => it.room)).size : undefined,
+        });
+      }
 
       // A share link is opened by someone who has no pairing and no room —
       // the token is the only thing they hold, so it is checked before the
@@ -166,7 +185,10 @@ export function createServer({
         // The sender picks how long this one lives; the server picks the ceiling.
         // No header means the server's own default.
         const asked = req.headers['x-keep'];
-        const expiresAt = asked ? Date.now() + clampTtl(asked, maxTtlMs) : undefined;
+        // "0" is the superuser asking for no deadline at all; anyone else asking
+        // for that just gets the ceiling.
+        const forever = asked === '0' && isAdmin(req);
+        const expiresAt = forever ? 0 : asked ? Date.now() + clampTtl(asked, ttlCeilingFor(req)) : undefined;
 
         // A body means there is a blob; text-only items live entirely in meta.
         // Which one this is comes from what actually arrived, not from a
@@ -206,13 +228,25 @@ export function createServer({
     }
   });
 
-  /** The superuser lifts the per-file cap. The volume is still the volume. */
+  /**
+   * The superuser is whoever can show the proof for the configured code. The
+   * proof travels in a header rather than the path, so it stays out of access
+   * logs, and the server only ever holds its hash.
+   */
   function isAdmin(req) {
-    return Boolean(adminKey) && equals(String(req.headers['x-admin'] || ''), adminKey);
+    const shown = String(req.headers['x-proof'] || '');
+    if (!adminProof || !shown) return false;
+    return equals(createHash('sha256').update(shown).digest('hex'), adminProof);
   }
 
+  /** No per-file cap for the superuser. The volume is still the volume. */
   function limitFor(req) {
     return isAdmin(req) ? store.maxBytes : Math.min(maxItemBytes, store.maxBytes);
+  }
+
+  /** Nor a ceiling on how long they may keep something, including forever. */
+  function ttlCeilingFor(req) {
+    return isAdmin(req) ? Infinity : maxTtlMs;
   }
 
   /**

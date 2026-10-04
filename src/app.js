@@ -9,7 +9,6 @@ import {
 // chunked AES-GCM with a per-chunk counter and a streaming reader.
 const MAX_FILE = 80 * 1024 * 1024;
 const SAVED = 'cubby.code';
-const ADMIN = 'cubby.admin';
 const KEEP = 'cubby.keep';
 const SHARES = [
   ['Once', { once: true }],
@@ -37,6 +36,8 @@ const MAX_PREVIEW = 8 * 1024 * 1024;
 
 let key;
 let room;
+let proof = '';
+let me = { admin: false, maxItemBytes: MAX_FILE, maxKeepSeconds: 604_800 };
 const plaintext = new Map(); // item id -> decrypted meta, so re-renders are free
 const previews = new Map(); // item id -> object URL, so an image is fetched once
 const fetching = new Set();
@@ -188,18 +189,21 @@ async function render(items) {
   }));
 }
 
-const admin = () => localStorage.getItem(ADMIN) || '';
-const keep = () => Number(localStorage.getItem(KEEP)) || DEFAULT_KEEP;
+// "0" is a real choice (forever), so an absent value is the only default.
+const keep = () => {
+  const saved = localStorage.getItem(KEEP);
+  return saved === null ? DEFAULT_KEEP : Number(saved);
+};
 
 function headers(extra) {
-  // The superuser key only ever lifts a limit; it is not a login, and the
-  // server still cannot read a byte of what it waves through.
-  return admin() ? { ...extra, 'x-admin': admin() } : extra;
+  // The proof says which code this is, without saying what the code is. The
+  // server compares its hash and still cannot read a byte either way.
+  return { ...extra, 'x-proof': proof };
 }
 
 /** Fill a <select> from the ladder, remembering the choice on this device. */
-function spans(el, store, chosen, onPick) {
-  el.replaceChildren(...SPANS.map(([name, seconds]) => {
+function spans(el, store, chosen, onPick, ladder = SPANS) {
+  el.replaceChildren(...ladder.map(([name, seconds]) => {
     const option = document.createElement('option');
     option.value = String(seconds);
     option.textContent = name;
@@ -294,8 +298,9 @@ async function sendText() {
 
 async function upload(files) {
   for (const file of files) {
-    if (file.size > MAX_FILE && !admin()) {
-      toast(`${file.name} is over the ${bytes(MAX_FILE)} limit`);
+    // The ceiling the server just told us about, not a guess baked in here.
+    if (file.size > me.maxItemBytes) {
+      toast(`${file.name} is over the ${bytes(me.maxItemBytes)} limit`);
       continue;
     }
     try {
@@ -309,12 +314,12 @@ async function upload(files) {
   }
 }
 
+/** What the server just told us this device may do. Not a claim, an answer. */
 function sayLimit() {
-  // The server has the final say — a wrong key just means the upload is refused
-  // at the usual size, so this is a claim about intent, not a permission.
-  $('limit').textContent = admin()
-    ? 'Superuser key set — files go up as large as the server will hold.'
-    : `Files up to ${bytes(MAX_FILE)}.`;
+  $('limit').textContent = me.admin
+    ? `Superuser — no file size limit, no expiry limit. ${me.items} items, ${bytes(me.bytes)} across ${me.rooms} rooms on this server.`
+    : `Files up to ${bytes(me.maxItemBytes)}, kept at most ${Math.round(me.maxKeepSeconds / 86_400)} days.`;
+  $('limit').classList.toggle('lock', me.admin);
 }
 
 function wire() {
@@ -325,15 +330,12 @@ function wire() {
   $('clear').onclick = () => confirm('Delete everything in this cubby?') && api(`/api/items?room=${room}`, { method: 'DELETE' });
 
   $('pair').onclick = () => $('card').toggleAttribute('hidden');
-  spans($('keep'), KEEP, keep(), (seconds) => toast(`New drops will keep for ${SPANS.find(([, s]) => s === seconds)[0]}`));
+  // The superuser gets one option nobody else does.
+  const ladder = me.admin ? [...SPANS, ['Forever', 0]] : SPANS;
+  spans($('keep'), KEEP, keep(), (seconds) => {
+    toast(`New drops will keep for ${ladder.find(([, s]) => s === seconds)?.[0] ?? 'the default'}`);
+  }, ladder);
 
-  $('adminkey').value = admin();
-  $('adminkey').onchange = () => {
-    const given = $('adminkey').value.trim();
-    if (given) localStorage.setItem(ADMIN, given);
-    else localStorage.removeItem(ADMIN);
-    sayLimit();
-  };
   sayLimit();
   $('copycode').onclick = async () => {
     await navigator.clipboard.writeText($('code').textContent);
@@ -377,7 +379,9 @@ async function keepPaired() {
 }
 
 async function open(code) {
-  ({ room, key } = await deriveIdentity(code));
+  ({ room, key, proof } = await deriveIdentity(code));
+  // Ask what this code is allowed to do before drawing any limits on screen.
+  me = await (await api('/api/me', { headers: headers({}) })).json();
   // Paired once, paired for good: the code lives here and nowhere on the server.
   localStorage.setItem(SAVED, normalize(code));
   history.replaceState(null, '', location.pathname); // keep the key out of the address bar

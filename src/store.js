@@ -71,7 +71,8 @@ export class Store extends EventEmitter {
     const item = { id, room, meta, size, blob, at: Date.now() };
     // An item may carry its own deadline instead of the store's default; a share
     // also carries its own way of dying.
-    if (expiresAt) item.expiresAt = expiresAt;
+    // 0 is a real value here: it means no deadline, which only the superuser gets.
+    if (expiresAt !== undefined) item.expiresAt = expiresAt;
     if (token) Object.assign(item, { token, once: Boolean(once) });
     this.items.unshift(item);
     this.prune();
@@ -133,8 +134,11 @@ export class Store extends EventEmitter {
         else (bytes += item.size, kept.push(item));
         continue;
       }
-      // Its own deadline if it was given one, the store's default otherwise.
-      const expired = item.expiresAt ? item.expiresAt < now : item.at < cutoff;
+      // Its own deadline if it was given one, the store's default otherwise —
+      // and a deadline of 0 means it has none, so only the size caps reach it.
+      const expired = item.expiresAt === 0 ? false
+        : item.expiresAt ? item.expiresAt < now
+        : item.at < cutoff;
       if (expired || count >= this.maxItems || bytes + item.size > this.maxBytes) {
         dropped.push(item);
       } else {

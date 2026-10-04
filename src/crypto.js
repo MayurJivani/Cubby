@@ -32,16 +32,32 @@ export function format(code) {
   return normalize(code).match(/.{1,4}/g)?.join('-') ?? '';
 }
 
-/** code -> { room, key }. Deliberately slow: it is the only thing guarding a room. */
+/**
+ * code -> { room, key, proof }. Deliberately slow: it is the only thing guarding
+ * a room.
+ *
+ * Three slices of one stretched output: the AES key (0-31), the room id the
+ * server files things under (32-47), and a proof the holder can show without
+ * giving anything away (48-63). The server stores only sha256(proof), so it can
+ * recognise a particular code's owner while still being unable to read, or to
+ * impersonate, anything. PBKDF2 blocks are independent, so asking for more bits
+ * leaves the first two slices exactly as they were.
+ */
 export async function deriveIdentity(code) {
   const normalized = normalize(code);
   if (normalized.length < 8) throw new Error('code too short');
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(normalized), 'PBKDF2', false, ['deriveBits']);
   const bits = new Uint8Array(
-    await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: SALT, iterations: ITERATIONS, hash: 'SHA-256' }, base, 384),
+    await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: SALT, iterations: ITERATIONS, hash: 'SHA-256' }, base, 512),
   );
   const key = await crypto.subtle.importKey('raw', bits.slice(0, 32), 'AES-GCM', false, ['encrypt', 'decrypt']);
-  return { room: b64url(bits.slice(32)), key };
+  return { room: b64url(bits.slice(32, 48)), key, proof: b64url(bits.slice(48, 64)) };
+}
+
+/** What the server is configured with: the proof's fingerprint, not the proof. */
+export async function fingerprint(proof) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(proof));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 // A share is for someone who has no pairing code, so it gets its own key —
