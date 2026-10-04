@@ -1,5 +1,10 @@
 # Cubby
 
+![Node](https://img.shields.io/badge/node-%E2%89%A520-5a9e6f)
+![Dependencies](https://img.shields.io/badge/dependencies-none-5a9e6f)
+![Crypto](https://img.shields.io/badge/crypto-AES--GCM%20%2B%20PBKDF2-5a9e6f)
+![License](https://img.shields.io/badge/license-MIT-5a9e6f)
+
 A drop box for your own devices. Paste text or drop files on the laptop, pick them
 up on the phone a second later. Everything is encrypted in the browser before it
 leaves, so the server — yours or anyone's — stores bytes it cannot read.
