@@ -10,6 +10,13 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CADDY=/etc/caddy/Caddyfile
 
+# Say so up front rather than dying halfway through copying the Caddyfile.
+if [ "$(id -u)" -ne 0 ]; then
+  echo "install.sh edits $CADDY and reloads caddy, so it needs root:" >&2
+  echo "  sudo sh $0" >&2
+  exit 1
+fi
+
 cp "$CADDY" "$CADDY.bak"
 
 python3 - "$CADDY" "$HERE/cubby.caddy" <<'PY'
