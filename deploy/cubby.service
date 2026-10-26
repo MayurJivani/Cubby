@@ -1,0 +1,24 @@
+[Unit]
+Description=cubby (end-to-end encrypted drop box)
+After=network-online.target
+
+[Service]
+User=icarusfalls
+WorkingDirectory=/opt/apps/Cubby
+# Optional overrides only; nothing here is secret. (CUBBY_PIN, CUBBY_ADMIN_PROOF)
+EnvironmentFile=-/etc/apps/cubby.env
+Environment=NODE_ENV=production PORT=4747 CUBBY_DIR=/run/cubby CUBBY_TRUST_PROXY=1
+ExecStart=/usr/bin/node bin/cubby.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=768M
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+# Items live in RAM under /run/cubby and go when the unit stops, by design.
+RuntimeDirectory=cubby
+
+[Install]
+WantedBy=multi-user.target
