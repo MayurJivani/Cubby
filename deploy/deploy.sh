@@ -1,53 +1,29 @@
 #!/bin/sh
-# Ship cubby to Jinx. There is no node on that box and no root in this script, so
-# the unit of deployment is a container: the source goes over as a tarball, docker
-# builds it there, and the old container is replaced.
+# Ship Cubby to Jinx. The box keeps its own checkout at /opt/apps/Cubby, so the
+# unit of deployment is a fast-forward of that checkout, a rebuild in place and
+# a restart of the `cubby` systemd unit. Nothing is copied from here, which is
+# what makes a deploy from CI and a deploy from a laptop the same operation.
 #
-# The pile lives in the named volume `cubby-data`, which is never touched here —
-# rebuilding or rolling back does not lose what people have dropped.
+# --ff-only rather than a plain pull: if the checkout on the box has drifted,
+# stop and say so rather than quietly merging something nobody wrote.
 #
-# deploy/ is also unpacked to ~/cubby-setup, because install.sh needs root and
-# root needs a path that exists. That is the only piece of this that outlives the
-# run.
+# The disk on Jinx is failing, so writes are kept down: the npm cache is on
+# tmpfs (/tmp/npm, set in ~/.npmrc there) and dev dependencies are pruned once
+# the build is done. Runtime config is /etc/apps/cubby.env, read by the unit.
 set -eu
-cd "$(dirname "$0")/.."
-
-tar czf - Dockerfile package.json src bin deploy | ssh ssh.futile.studio '
+ssh ssh.futile.studio '
   set -eu
-  tmp=$(mktemp -d)
-  trap "rm -rf $tmp" EXIT
-  tar xzf - -C "$tmp"
+  cd /opt/apps/Cubby
+  git pull --ff-only
+  # Zero dependencies and no build step, so there is nothing to install.
+  sudo -n systemctl restart cubby
 
-  rm -rf ~/cubby-setup
-  cp -r "$tmp/deploy" ~/cubby-setup
-
-  # The site is open to anyone, so there is no password here. ~/.cubby-secrets
-  # holds only CUBBY_ADMIN_PROOF: the fingerprint of one pairing code, which
-  # identifies the superuser without the server ever holding that code.
-  # (No apostrophes in here: the whole block is a single-quoted ssh argument.)
-  secrets="$HOME/.cubby-secrets"
-  [ -f "$secrets" ] || { echo "cubby: missing $secrets (needs CUBBY_ADMIN_PROOF)"; exit 1; }
-
-  docker build -q -t cubby:latest "$tmp" >/dev/null
-  docker rm -f cubby >/dev/null 2>&1 || true
-  docker run -d \
-    --name cubby \
-    --restart unless-stopped \
-    --read-only \
-    --tmpfs /tmp \
-    --memory 512m \
-    --publish 127.0.0.1:4747:4747 \
-    --volume cubby-data:/data \
-    --env-file "$secrets" \
-    --env CUBBY_HOURS=24 \
-    --env CUBBY_MB=2048 \
-    --env CUBBY_MAX_KEEP_HOURS=168 \
-    cubby:latest >/dev/null
-
-  # Come back and check, rather than trusting that "docker run" meant "serving".
-  sleep 2
+  # Come back and check, rather than trusting that a restart meant "serving".
+  sleep 5
   code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4747/ || true)
-  [ "$code" = "200" ] || { echo "cubby: not serving (HTTP $code)"; docker logs --tail 30 cubby; exit 1; }
-  echo "cubby: $(docker ps --filter name=cubby --format "{{.Status}}"), serving on 127.0.0.1:4747"
-  echo "cubby: installer staged at ~/cubby-setup/install.sh"
+  case "$code" in
+    200) echo "cubby: serving on 127.0.0.1:4747 (HTTP $code)" ;;
+    *) echo "cubby: not serving (HTTP $code)"; sudo -n journalctl -u cubby -n 30 --no-pager; exit 1 ;;
+  esac
 '
+echo "cubby: deployed to https://cubby.futile.studio"

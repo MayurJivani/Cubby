@@ -1,3 +1,10 @@
 cubby-data/
 node_modules/
 .claude/
+
+# Claude Code and local tooling
+dist
+.env
+.impeccable
+.codegraph
+.mcp.json
