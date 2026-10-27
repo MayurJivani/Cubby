@@ -84,12 +84,14 @@ export class Store extends EventEmitter {
     fs.rmSync(this.blobPath(id), { force: true });
   }
 
+  // Shares are filed under room 'share', which is also a valid room id, so every
+  // room-scoped lookup skips tokened items: a share is reachable by its token only.
   get(id, room) {
-    return this.items.find((it) => it.id === id && it.room === room);
+    return this.items.find((it) => it.id === id && it.room === room && !it.token);
   }
 
   remove(id, room) {
-    const i = this.items.findIndex((it) => it.id === id && it.room === room);
+    const i = this.items.findIndex((it) => it.id === id && it.room === room && !it.token);
     if (i === -1) return false;
     const [item] = this.items.splice(i, 1);
     if (item.blob) this.drop(item.id);
@@ -99,7 +101,7 @@ export class Store extends EventEmitter {
 
   clear(room) {
     this.items = this.items.filter((it) => {
-      if (it.room !== room) return true;
+      if (it.room !== room || it.token) return true;
       if (it.blob) this.drop(it.id);
       return false;
     });

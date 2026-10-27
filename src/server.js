@@ -223,7 +223,9 @@ export function createServer({
 
       return json(res, 404, { error: 'no such thing' });
     } catch (err) {
-      if (!res.headersSent) json(res, err.status || 500, { error: err.message });
+      // Only errors raised here on purpose carry a status; anything else (an fs error
+      // naming a path, say) is not the client's business.
+      if (!res.headersSent) json(res, err.status || 500, { error: err.status ? err.message : 'server error' });
       else res.destroy();
     }
   });
@@ -341,8 +343,15 @@ function equals(a, b) {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-/** Behind a proxy every request shares one socket address; the last hop in XFF is the real client. */
+/**
+ * Behind a proxy every request shares one socket address. On Jinx the chain is
+ * Cloudflare -> cloudflared -> Caddy, and Caddy rewrites XFF to its own peer
+ * (127.0.0.1), so Cloudflare's CF-Connecting-IP is the only header naming the
+ * visitor; the last XFF hop is the fallback for any other single proxy.
+ */
 function clientKey(req, trustProxy) {
+  const cf = trustProxy && String(req.headers['cf-connecting-ip'] || '').trim();
+  if (cf) return cf;
   const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
   return (trustProxy && xff.at(-1)) || req.socket.remoteAddress || '?';
 }

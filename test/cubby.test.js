@@ -463,3 +463,36 @@ test('default store TTL is 24 hours', () => {
   assert.equal(store.ttlMs, 24 * 60 * 60 * 1000);
 });
 
+
+test('a room named share cannot reach, list or wipe the share links', async () => {
+  const { base, done } = await serve();
+  try {
+    const made = await fetch(`${base}/api/share`, {
+      method: 'POST',
+      headers: { 'x-meta': 'm', 'x-share-ttl': '600' },
+      body: new Uint8Array([1, 2, 3]),
+    });
+    const { token } = await made.json();
+    assert.deepEqual(await (await fetch(`${base}/api/items?room=share`)).json(), []);
+    await fetch(`${base}/api/items?room=share`, { method: 'DELETE' });
+    const opened = await fetch(`${base}/api/share/${token}`, { method: 'POST' });
+    assert.equal(opened.status, 200, 'the share outlived a clear of room "share"');
+  } finally {
+    await done();
+  }
+});
+
+test('behind a proxy each Cloudflare visitor gets their own guess budget', async () => {
+  const { base, done } = await serve({ pin: 'open-sesame', trustProxy: true });
+  try {
+    const guess = (ip) => fetch(`${base}/api/auth`, {
+      method: 'POST', body: 'nope',
+      headers: { 'cf-connecting-ip': ip, 'x-forwarded-for': '127.0.0.1' },
+    });
+    for (let i = 0; i < 13; i++) await guess('203.0.113.1');
+    assert.equal((await guess('203.0.113.1')).status, 429);
+    assert.equal((await guess('203.0.113.2')).status, 401, 'a second visitor is not locked out');
+  } finally {
+    await done();
+  }
+});
