@@ -3,7 +3,6 @@ Description=cubby (end-to-end encrypted drop box)
 After=network-online.target
 
 [Service]
-User=icarusfalls
 WorkingDirectory=/opt/apps/Cubby
 # Optional overrides only; nothing here is secret. (CUBBY_PIN, CUBBY_ADMIN_PROOF)
 EnvironmentFile=-/etc/apps/cubby.env
@@ -13,12 +12,41 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
 MemoryMax=768M
-NoNewPrivileges=yes
-ProtectSystem=full
+# Items live in RAM under /run/cubby (up to CUBBY_MB, 512 by default, charged to this unit)
+# and go when the unit stops, by design. Hence more than the usual 512M.
+RuntimeDirectory=cubby
+# --- least privilege: a throwaway user per start, no capabilities, read-only code ---
+DynamicUser=yes
+ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-# Items live in RAM under /run/cubby and go when the unit stops, by design.
-RuntimeDirectory=cubby
+PrivateDevices=yes
+PrivateIPC=yes
+NoNewPrivileges=yes
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK: os.networkInterfaces() (getifaddrs) needs it.
+RestrictAddressFamilies=AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# A blocked call fails with EPERM instead of killing the process.
+SystemCallErrorNumber=EPERM
+UMask=0077
+# No MemoryDenyWriteExecute: V8's JIT needs writable+executable pages.
 
 [Install]
 WantedBy=multi-user.target

@@ -1,5 +1,5 @@
 http://cubby.futile.studio {
-	encode gzip
+	import common
 
 	# The browser only hands out WebCrypto in a secure context, so the public
 	# address must be https — that is Cloudflare's half of this. The origin stays
