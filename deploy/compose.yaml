@@ -1,0 +1,24 @@
+# Coolify on Jinx (FRC/DEPLOY.md). Host network: the app listens on 4747 like
+# its old systemd unit did, so its Caddy block, Postgres URL and env file are unchanged.
+services:
+  cubby:
+    image: ghcr.io/mayurjivani/cubby:latest
+    network_mode: host
+    restart: unless-stopped
+    user: "1000:1000"
+    command: ["node", "bin/cubby.js"]
+    env_file:
+      - path: /etc/apps/cubby.env
+        required: false
+    environment:
+      NODE_ENV: "production"
+      PORT: "4747"
+      CUBBY_DIR: "/run/cubby"
+      CUBBY_TRUST_PROXY: "1"
+    mem_limit: 768m
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/cubby:uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
